@@ -488,7 +488,8 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 	if !lp:GetTool() or lp:GetTool():GetMode() ~= 'ctools_npc' then return end
 	local bcgcol = ColorAlpha(HSVToColor(180+math.sin(SysTime()*6)*20,1,1),128)
 	if trbuff then
-		local strbuff = angbuff and scndbuff or lp:GetEyeTrace().HitPos
+		local curtr = lp:GetEyeTrace().HitPos+Vector(0,0,r_renderoff)
+		local strbuff = angbuff and scndbuff or curtr
 		local absolute = NPCBox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
 		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)+r_renderoff
 		local area = (strbuff-trbuff)
@@ -497,7 +498,7 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 		arx, ary = by_x, by_y
 		local actbad = (by_x < 1 or by_y < 1)
 		local secondpos = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+by_y*absolute*sy,maxz)
-		DrawArea(trbuff,secondpos,mat_solid,actbad and mcol_bad or mcol_good)
+		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,actbad and mcol_bad or mcol_good)
 		if !actbad then
 			for i = 1, by_x+1 do
 				local v1 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y,maxz)
