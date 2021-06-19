@@ -6,7 +6,43 @@ TOOL.ConfigName = ''
 
 
 
-if SERVER then return end
+if SERVER then
+	if game.SinglePlayer() then
+		util.AddNetworkString('ctdamnprediction')
+
+		local function SendNet(num)
+			net.Start('ctdamnprediction')
+				net.WriteUInt(num,3)
+			net.Send(Entity(1))
+		end
+
+		function TOOL:LeftClick() SendNet(0) end
+		function TOOL:RightClick() SendNet(1) end
+		function TOOL:Reload() SendNet(2) end
+		function TOOL:Deploy() SendNet(3) end
+		function TOOL:Holster() SendNet(4) end
+	end
+	return
+end
+
+if game.SinglePlayer() then
+	net.Receive('ctdamnprediction',function()
+		local num = net.ReadUInt(3)
+		local tooltab = LocalPlayer():GetTool('ctools_npc')
+		if !tooltab then return end
+		if num == 0 then
+			tooltab:LeftClick()
+		elseif num == 1 then
+			tooltab:RightClick()
+		elseif num == 2 then
+			tooltab:Reload()
+		elseif num == 3 then
+			tooltab:Deploy()
+		elseif num == 4 then
+			tooltab:Holster()
+		end
+	end)
+end
 
 language.Add('tool.ctools_npc.name','Chromium NPC Spawner')
 language.Add('tool.ctools_npc.desc','Simple and flexible NPC Spawner Tool.')
@@ -230,6 +266,7 @@ end
 
 function TOOL:LeftClick(trace)
 	if spamtime+0.1 > CurTime() then return false end
+	trace = trace or lp:GetEyeTrace()
 	spamtime = CurTime()
 	if trbuff then
 		local absolute = NPCBox*math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
@@ -330,6 +367,7 @@ end
 
 function TOOL:RightClick(trace)
 	if spamtime+0.1 > CurTime() then return false end
+	trace = trace or lp:GetEyeTrace()
 	spamtime = CurTime()
 	if trbuff and angbuff then return false end
 	if trbuff then
@@ -383,7 +421,7 @@ function TOOL:RightClick(trace)
 	return false
 end
 
-function TOOL:Reload(trace)
+function TOOL:Reload()
 	if spamtime+0.1 > CurTime() then return false end
 	spamtime = CurTime()
 	if trbuff then
@@ -464,12 +502,12 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 			for i = 1, by_x+1 do
 				local v1 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y,maxz)
 				local v2 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y+by_y*absolute*sy,maxz)
-				render.DrawLine(v1,v2)
+				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 			end
 			for i = 1, by_y+1 do
 				local v1 = Vector(trbuff.x,trbuff.y+absolute*(i-1)*sy,maxz)
 				local v2 = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+absolute*(i-1)*sy,maxz)
-				render.DrawLine(v1,v2)
+				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 			end
 		end
 		if angbuff then
@@ -488,12 +526,12 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 		for i = 1, by_x+1 do
 			local v1 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y,maxz)
 			local v2 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y+by_y*absolute*sy,maxz)
-			render.DrawLine(v1,v2,mcol_line,r_lines_ignorez)
+			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 		end
 		for i = 1, by_y+1 do
 			local v1 = Vector(at[1].x,at[1].y+absolute*(i-1)*sy,maxz)
 			local v2 = Vector(at[1].x+by_x*absolute*sx,at[1].y+absolute*(i-1)*sy,maxz)
-			render.DrawLine(v1,v2,mcol_line,r_lines_ignorez)
+			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 		end
 		local orig = Vector(at[1].x+absolute*sx*by_x/2,at[1].y+absolute*sy*by_y/2,maxz)
 		DrawAngle(orig,at[8])
