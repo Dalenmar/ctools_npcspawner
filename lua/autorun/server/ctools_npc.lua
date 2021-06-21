@@ -1,6 +1,7 @@
 local t_requests = {}
 local t_spawnednpcs = {}
 local t_npcs = {}
+local req_key
 
 
 
@@ -78,6 +79,7 @@ net.Receive('ctnpces',function(len,ply)
 		undo.SetCustomUndoText('Undone NPC Area')
 		undo.AddFunction(function(tab,args)
 			for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
+				if !IsValid(v) then continue end
 				v:Remove()
 			end
 			t_requests[af] = nil
@@ -86,9 +88,6 @@ net.Receive('ctnpces',function(len,ply)
 		undo.SetPlayer(ply)
 	undo.Finish('NPC Area')
 end)
-
-
-local req_key
 
 hook.Add('Tick','ctools_npc',function()
 	if !req_key or !t_requests[req_key] then

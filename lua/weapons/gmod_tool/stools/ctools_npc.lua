@@ -163,6 +163,8 @@ local soundtab = {
 	fail = 'buttons/button11.wav',
 	exec = 'buttons/combine_button1.wav',
 	undo = 'buttons/button15.wav',
+	click_random = 'buttons/lever7.wav',
+	click_spread = 'buttons/lightswitch2.wav',
 }
 
 local NPCBox = 32
@@ -171,9 +173,8 @@ local r_renderoff = 2
 local r_yawmult = 512
 local r_rmkcol = Color(192,192,255,128)
 local r_rmksize = 128
-local rs_circle = r_rmksize/1.125
 
-local AreaTable = {}
+local t_areas = {}
 local t_npcs, t_weps
 local data_npc, data_weps
 local oldarcnt, arnpccnt = 0, 0
@@ -184,6 +185,12 @@ local spamtime = CurTime()
 local oldang
 local mx_old = 0
 local yawlerp = 0
+
+
+local math = math
+local cam = cam
+local render = render
+local surface = surface
 
 
 
@@ -232,32 +239,36 @@ local function DrawArea(vec1,vec2,mat,col)
 	local miny = vec1.y < vec2.y and vec1.y or vec2.y
 	local maxy = vec1.y > vec2.y and vec1.y or vec2.y
 	local maxz = vec1.z > vec2.z and vec1.z or vec2.z
-	local v1 = Vector(minx,miny,maxz)
-	local v2 = Vector(minx,maxy,maxz)
-	local v3 = Vector(maxx,maxy,maxz)
-	local v4 = Vector(maxx,miny,maxz)
+	local v1 = Vector(minx,miny,maxz+r_renderoff)
+	local v2 = Vector(minx,maxy,maxz+r_renderoff)
+	local v3 = Vector(maxx,maxy,maxz+r_renderoff)
+	local v4 = Vector(maxx,miny,maxz+r_renderoff)
 	render.SetMaterial(mat)
 	render.DrawQuad(v1,v2,v3,v4,col)
 	render.DrawQuad(v4,v3,v2,v1,col)
 end
 
-local function DrawAngle(pos,ang,ignorez)
+local function DrawAngle(pos,ang,sizelimit,ignorez)
+	local size = r_rmksize
+	if sizelimit and sizelimit < r_rmksize*2 then
+		size = sizelimit/2
+	end
 	local lpunder = lp:GetShootPos().z < pos.z
 	local ar = lpunder and 180 or 0
 	local yadd = lpunder and -90 or 0
 	ang = Angle(0,ang-135+yadd,ar)
-	cam.Start3D2D(pos,ang,1)
+	cam.Start3D2D(pos+Vector(0,0,r_renderoff),ang,1)
 		if ignorez then cam.IgnoreZ(true) end
 			render.PushFilterMag(TEXFILTER.ANISOTROPIC)
 			render.PushFilterMin(TEXFILTER.ANISOTROPIC)
 				surface.SetDrawColor(r_rmkcol:Unpack())
 				surface.SetMaterial(tex_cornerin)
-				surface.DrawTexturedRectUV(-rs_circle,0-rs_circle,rs_circle,rs_circle,0,0,1,1)
-				surface.DrawTexturedRectUV(0,-rs_circle,rs_circle,rs_circle,1,0,0,1)
-				surface.DrawTexturedRectUV(-rs_circle,0,rs_circle,rs_circle,0,1,1,0)
-				surface.DrawTexturedRectUV(0,0,rs_circle,rs_circle,1,1,0,0)
+				surface.DrawTexturedRectUV(-size,0-size,size,size,0,0,1,1)
+				surface.DrawTexturedRectUV(0,-size,size,size,1,0,0,1)
+				surface.DrawTexturedRectUV(-size,0,size,size,0,1,1,0)
+				surface.DrawTexturedRectUV(0,0,size,size,1,1,0,0)
 				surface.SetMaterial(tex_cornerout)
-				surface.DrawTexturedRect(-r_rmksize,-r_rmksize,r_rmksize,r_rmksize)
+				surface.DrawTexturedRect(-size,-size,size,size)
 			render.PopFilterMag()
 			render.PopFilterMin()
 		if ignorez then cam.IgnoreZ(false) end
@@ -270,6 +281,7 @@ function TOOL:LeftClick(trace)
 	spamtime = CurTime()
 	if trbuff then
 		local absolute = NPCBox*math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
+		
 		local maxz = trbuff.z > trace.HitPos.z and trbuff.z or trace.HitPos.z
 		local maxz = angbuff and (trbuff.z > scndbuff.z and trbuff.z or scndbuff.z) or trbuff.z
 		local area = ((angbuff and scndbuff or trace.HitPos)-trbuff)
@@ -282,6 +294,15 @@ function TOOL:LeftClick(trace)
 			oldang = nil
 			return false
 		end
+		if by_x*by_y > 14000 then
+			notification.AddLegacy('Too many NPCs!',NOTIFY_ERROR,2)
+			surface.PlaySound(soundtab.fail)
+			trbuff = nil
+			angbuff = nil
+			oldang = nil
+			return false
+		end
+		
 		if !angbuff then
 			angbuff = true
 			scndbuff = lp:GetEyeTrace().HitPos
@@ -328,7 +349,7 @@ function TOOL:LeftClick(trace)
 		if t_weps[equip] then
 			equip_class = t_weps[equip].class
 		end
-		AreaTable[#AreaTable+1] = {
+		t_areas[#t_areas+1] = {
 			trbuff,
 			scndbuff,
 			areatab,
@@ -375,10 +396,10 @@ function TOOL:RightClick(trace)
 		surface.PlaySound(soundtab.success)
 		return false
 	end
-	if !AreaTable[1] then return false end
+	if !t_areas[1] then return false end
 	notification.AddLegacy('Executing...',NOTIFY_GENERIC,2)
 	surface.PlaySound(soundtab.exec)
-	for k,v in ipairs(AreaTable) do
+	for k,v in ipairs(t_areas) do
 		net.Start('ctnpces')
 		net.WriteString(v[7])
 		net.WriteInt(v[8],9)
@@ -417,7 +438,7 @@ function TOOL:RightClick(trace)
 		net.SendToServer()
 	end
 	trbuff = nil
-	AreaTable = {}
+	t_areas = {}
 	return false
 end
 
@@ -432,8 +453,8 @@ function TOOL:Reload()
 		notification.AddLegacy('Undone the current area!',NOTIFY_UNDO,2)
 		return false
 	end
-	if AreaTable[#AreaTable] then
-		AreaTable[#AreaTable] = nil
+	if t_areas[#t_areas] then
+		t_areas[#t_areas] = nil
 		surface.PlaySound(soundtab.undo)
 		notification.AddLegacy('Undone last created area!',NOTIFY_UNDO,2)
 		return false
@@ -471,10 +492,16 @@ hook.Add('CreateMove','ctools_npc',function(cmd)
 		var = GetConVar('ctools_npc_random')
 		cvar = lp:GetTool():GetClientNumber('random',0)
 		nmin, nmax = MIN_RANDOM, MAX_RANDOM
+		if var:GetInt() > MIN_RANDOM and var:GetInt() < MAX_RANDOM then
+			EmitSound(soundtab.click_random,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
+		end
 	else
 		var = GetConVar('ctools_npc_spread')
 		cvar = lp:GetTool():GetClientNumber('spread',20)
 		nmin, nmax = MIN_SPREAD, MAX_SPREAD
+		if var:GetInt() > MIN_SPREAD and var:GetInt() < MAX_SPREAD then
+			EmitSound(soundtab.click_spread,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
+		end
 	end
 	if !var then return angbuff end
 	var:SetInt(math.Clamp(cvar+step,nmin,nmax))
@@ -486,12 +513,11 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 	if !IsValid(lp:GetActiveWeapon()) then return end
 	if lp:GetActiveWeapon():GetClass() ~= 'gmod_tool' then return end
 	if !lp:GetTool() or lp:GetTool():GetMode() ~= 'ctools_npc' then return end
-	local bcgcol = ColorAlpha(HSVToColor(180+math.sin(SysTime()*6)*20,1,1),128)
 	if trbuff then
-		local curtr = lp:GetEyeTrace().HitPos+Vector(0,0,r_renderoff)
+		local curtr = lp:GetEyeTrace().HitPos
 		local strbuff = angbuff and scndbuff or curtr
 		local absolute = NPCBox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
-		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)+r_renderoff
+		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)
 		local area = (strbuff-trbuff)
 		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
@@ -501,51 +527,53 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,actbad and mcol_bad or mcol_good)
 		if !actbad then
 			for i = 1, by_x+1 do
-				local v1 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y,maxz)
-				local v2 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y+by_y*absolute*sy,maxz)
+				local v1 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y+by_y*absolute*sy,maxz+r_renderoff)
 				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 			end
 			for i = 1, by_y+1 do
-				local v1 = Vector(trbuff.x,trbuff.y+absolute*(i-1)*sy,maxz)
-				local v2 = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+absolute*(i-1)*sy,maxz)
+				local v1 = Vector(trbuff.x,trbuff.y+absolute*(i-1)*sy,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+absolute*(i-1)*sy,maxz+r_renderoff)
 				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 			end
 		end
 		if angbuff then
 			local orig = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
 			yawlerp = Lerp(0.25,yawlerp,angbuff.y)
-			DrawAngle(orig,yawlerp,true)
+			local angsizelimit = math.min(by_x*absolute,by_y*absolute)
+			DrawAngle(orig,yawlerp,angsizelimit,true)
 		end
 	end
-	for _,at in ipairs(AreaTable) do
+	for _,at in ipairs(t_areas) do
 		local absolute = NPCBox*at[5]/10
 		local area = at[2]-at[1]
-		local maxz = at[4]+r_renderoff
+		local maxz = at[4]
 		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
 		DrawArea(Vector(at[1].x,at[1].y,maxz),Vector(at[1].x+absolute*by_x*sx,at[1].y+absolute*by_y*sy,maxz),mat_solid,mcol_completed)
 		for i = 1, by_x+1 do
-			local v1 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y,maxz)
-			local v2 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y+by_y*absolute*sy,maxz)
+			local v1 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y,maxz+r_renderoff)
+			local v2 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y+by_y*absolute*sy,maxz+r_renderoff)
 			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 		end
 		for i = 1, by_y+1 do
-			local v1 = Vector(at[1].x,at[1].y+absolute*(i-1)*sy,maxz)
-			local v2 = Vector(at[1].x+by_x*absolute*sx,at[1].y+absolute*(i-1)*sy,maxz)
+			local v1 = Vector(at[1].x,at[1].y+absolute*(i-1)*sy,maxz+r_renderoff)
+			local v2 = Vector(at[1].x+by_x*absolute*sx,at[1].y+absolute*(i-1)*sy,maxz+r_renderoff)
 			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
 		end
 		local orig = Vector(at[1].x+absolute*sx*by_x/2,at[1].y+absolute*sy*by_y/2,maxz)
-		DrawAngle(orig,at[8])
+		local angsizelimit = math.min(by_x*absolute,by_y*absolute)
+		DrawAngle(orig,at[8],angsizelimit)
 	end
 end)
 
 function TOOL:DrawToolScreen(width,height)
 	surface.SetDrawColor(Color(0,0,0,255))
 	surface.DrawRect(0,0,width,height)
-	if oldarcnt ~= #AreaTable then
-		oldarcnt = #AreaTable
+	if oldarcnt ~= #t_areas then
+		oldarcnt = #t_areas
 		arnpccnt = 0
-		for k,v in ipairs(AreaTable) do
+		for k,v in ipairs(t_areas) do
 			arnpccnt = arnpccnt + #v[3]
 		end
 	end
