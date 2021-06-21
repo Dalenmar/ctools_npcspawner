@@ -3,6 +3,10 @@ local t_spawnednpcs = {}
 local t_npcs = {}
 local req_key
 
+local net = net
+local undo = undo
+local next = next
+
 
 
 
@@ -49,7 +53,7 @@ net.Receive('ctnpces',function(len,ply)
 	if reqt.info[6] then
 		reqt.info[7] = net.ReadString()
 	end
-	reqt.info[8] = net.ReadUInt(5)
+	reqt.info[8] = net.ReadInt(6)
 	reqt.info[9] = net.ReadUInt(3)
 	reqt.info[10] = net.ReadBool()
 	reqt.info[11] = net.ReadBool()
@@ -66,15 +70,13 @@ net.Receive('ctnpces',function(len,ply)
 	if reqt.info[17] then
 		reqt.info[18] = net.ReadUInt(32)
 	end
-	reqt.info[19] = net.ReadUInt(16)
-	reqt.info[20] = net.ReadFloat()
-	reqt.info[21] = {}
-	reqt.info[22] = {}
-	for i = 1, reqt.info[19] do
-		reqt.info[21][i] = net.ReadInt(16)
-		reqt.info[22][i] = net.ReadInt(16)
+	local cmplen = net.ReadUInt(32)
+	local cmpdata = net.ReadData(cmplen)
+	reqt.info[19] = util.JSONToTable(util.Decompress(cmpdata))
+	if !cmpdata then
+		t_requests[af] = nil
+		return
 	end
-
 	undo.Create('NPC')
 		undo.SetCustomUndoText('Undone NPC Area')
 		undo.AddFunction(function(tab,args)
@@ -97,7 +99,8 @@ hook.Add('Tick','ctools_npc',function()
 	if !reqt then return end
 
 	for i = 1, npc_per_tick do
-		if #reqt.info[21] == 0 then
+		local posi = #reqt.info[19]
+		if posi == 0 then
 			t_requests[req_key] = nil
 			break
 		end
@@ -111,21 +114,22 @@ hook.Add('Tick','ctools_npc',function()
 
 		-- POSITION
 		local posoff = NPCData.Offset or 32
-		local pos = Vector(reqt.info[21][#(reqt.info[21])],reqt.info[22][#(reqt.info[22])],reqt.info[20]+posoff)
+		local pos = reqt.info[19][posi]+Vector(0,0,posoff)
 		if !util.IsInWorld(pos) then
-			reqt.info[21][#(reqt.info[21])] = nil
-			reqt.info[22][#(reqt.info[22])] = nil
+			reqt.info[19][posi] = nil
 			continue
 		end
 		npc:SetPos(pos)
-		reqt.info[21][#(reqt.info[21])] = nil
-		reqt.info[22][#(reqt.info[22])] = nil
+		reqt.info[19][posi] = nil
+		
 
 		-- ANGLES
 		local ang = Angle(0,reqt.info[2],0)
-		if NPCData.Rotate then
-			ang = ang + NPCData.Rotate
-		end
+		--[[
+			if NPCData.Rotate then
+				ang = ang + NPCData.Rotate
+			end
+		]]
 		npc:SetAngles(ang)
 
 		-- SPAWNFLAGS
@@ -163,12 +167,6 @@ hook.Add('Tick','ctools_npc',function()
 			npc:SetMaterial(NPCData.Material)
 		end
 
-		-- SKIN
-		if NPCData.Skin then
-			npc:SetSkin(NPCData.Skin)
-		end
-		npc:SetSkin(reqt.info[8])
-
 		-- WEAPON
 		if !reqt.info[4] then
 			if reqt.info[5] == '_def' then
@@ -184,6 +182,17 @@ hook.Add('Tick','ctools_npc',function()
 		-- SPAWN
 		npc:Spawn()
 		npc:Activate()
+
+		-- SKIN
+		if NPCData.Skin then
+			npc:SetSkin(NPCData.Skin)
+		end
+		if reqt.info[8] < 0 then
+			local randskin = math.random(1,npc:SkinCount())-1
+			npc:SetSkin(randskin)
+		else
+			npc:SetSkin(reqt.info[8])
+		end
 
 		-- BODYGROUPS
 		if NPCData.BodyGroups then

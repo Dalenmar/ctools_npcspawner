@@ -45,12 +45,12 @@ if game.SinglePlayer() then
 end
 
 language.Add('tool.ctools_npc.name','Chromium NPC Spawner')
-language.Add('tool.ctools_npc.desc','Simple and flexible NPC Spawner Tool.')
-language.Add('tool.ctools_npc.left','Create a new spawn area.')
-language.Add('tool.ctools_npc.right','Request execution of created spawn areas.')
-language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one.')
-language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area.')
-language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead.')
+language.Add('tool.ctools_npc.desc','Simple and flexible NPC Spawner Tool')
+language.Add('tool.ctools_npc.left','Create a new spawn area')
+language.Add('tool.ctools_npc.right','Request execution of created spawn areas')
+language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one')
+language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area')
+language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead')
 
 local font =  'Impact' --'Segoe UI'
 for i = 8, 64, 8 do
@@ -120,6 +120,7 @@ TOOL.ClientConVar['yaw'] = 0
 TOOL.ClientConVar['equip'] = '_def'
 TOOL.ClientConVar['model'] = ''
 TOOL.ClientConVar['skin'] = 0
+TOOL.ClientConVar['skinrandom'] = 0
 TOOL.ClientConVar['wepprof'] = 2
 TOOL.ClientConVar['ignoreply'] = 0
 TOOL.ClientConVar['ignoreplys'] = 0
@@ -151,6 +152,7 @@ local mat_solid = CreateMaterial('sadasdas'..math.random(10000),'UnlitGeneric',
 local tex_cornerin = Material('gui/corner512')
 local tex_cornerout = Material('gui/sniper_corner')
 
+local mcol_black = Color(0,0,0,255)
 local mcol_white = Color(255,255,255,255)
 local mcol_prewhite = Color(200,200,200,255)
 local mcol_bad = Color(255,64,64,64)
@@ -167,7 +169,24 @@ local soundtab = {
 	click_spread = 'buttons/lightswitch2.wav',
 }
 
-local NPCBox = 32
+local npcboxtab = {
+	['_def'] = 26+8,
+	['Antlion'] = 32+16,
+	['Antlion Worker'] = 32+16,
+	['Antlion Guard'] = 80+16,
+	['Antlion Guardian'] = 80+16,
+	['Strider'] = 76+64,
+	['Turret'] = 46+4,
+	['City Scanner'] = 16+8,
+	['Shield Scanner'] = 16+8,
+	['Manhack'] = 16+8,
+	['Hunter-Chopper'] = 76+64,
+	['Combine Dropship'] = 80+64,
+	['Combine Gunship'] = 80+64,
+}
+
+local lg_postraceoff = Vector(0,0,512)
+local NPCBox = npcboxtab._def
 local r_lines_writez = false
 local r_renderoff = 2
 local r_yawmult = 512
@@ -187,6 +206,8 @@ local mx_old = 0
 local yawlerp = 0
 
 
+local ipairs = ipairs
+local pairs = pairs
 local math = math
 local cam = cam
 local render = render
@@ -261,7 +282,7 @@ local function DrawAngle(pos,ang,sizelimit,ignorez)
 		if ignorez then cam.IgnoreZ(true) end
 			render.PushFilterMag(TEXFILTER.ANISOTROPIC)
 			render.PushFilterMin(TEXFILTER.ANISOTROPIC)
-				surface.SetDrawColor(r_rmkcol:Unpack())
+				surface.SetDrawColor(r_rmkcol.r,r_rmkcol.g,r_rmkcol.b,r_rmkcol.a)
 				surface.SetMaterial(tex_cornerin)
 				surface.DrawTexturedRectUV(-size,0-size,size,size,0,0,1,1)
 				surface.DrawTexturedRectUV(0,-size,size,size,1,0,0,1)
@@ -294,7 +315,7 @@ function TOOL:LeftClick(trace)
 			oldang = nil
 			return false
 		end
-		if by_x*by_y > 14000 then
+		if by_x*by_y > 16384 then
 			notification.AddLegacy('Too many NPCs!',NOTIFY_ERROR,2)
 			surface.PlaySound(soundtab.fail)
 			trbuff = nil
@@ -302,7 +323,6 @@ function TOOL:LeftClick(trace)
 			oldang = nil
 			return false
 		end
-		
 		if !angbuff then
 			angbuff = true
 			scndbuff = lp:GetEyeTrace().HitPos
@@ -349,6 +369,10 @@ function TOOL:LeftClick(trace)
 		if t_weps[equip] then
 			equip_class = t_weps[equip].class
 		end
+		local skin = self:GetClientNumber('skin',0)
+		if self:GetClientNumber('skinrandom',0) ~= 0 then
+			skin = -1
+		end
 		t_areas[#t_areas+1] = {
 			trbuff,
 			scndbuff,
@@ -363,7 +387,7 @@ function TOOL:LeftClick(trace)
 			equip_class or equip,
 			#self:GetClientInfo('model') > 4,
 			self:GetClientInfo('model'),
-			self:GetClientNumber('skin',0),
+			skin,
 			self:GetClientNumber('wepprof',2),
 			tobool(self:GetClientNumber('ignoreply',0)),
 			tobool(self:GetClientNumber('ignoreplys',0)),
@@ -412,7 +436,7 @@ function TOOL:RightClick(trace)
 		if v[12] then
 			net.WriteString(v[13])
 		end
-		net.WriteUInt(v[14],5)
+		net.WriteInt(v[14],6)
 		net.WriteUInt(v[15],3)
 		net.WriteBool(v[16])
 		net.WriteBool(v[17])
@@ -429,12 +453,20 @@ function TOOL:RightClick(trace)
 		if v[23] then
 			net.WriteUInt(v[24],32)
 		end
-		net.WriteUInt(#(v[3]),16)
-		net.WriteFloat(v[4])
-		for _,at in ipairs(v[3]) do
-			net.WriteInt(math.Round((at[1]+at[3])/2+math.random(-v[6],v[6])),16)
-			net.WriteInt(math.Round((at[2]+at[4])/2+math.random(-v[6],v[6])),16)
+		local temp = {}
+		for mk,at in ipairs(v[3]) do
+			local x = math.Round((at[1]+at[3])/2+math.random(-v[6],v[6]))
+			local y = math.Round((at[2]+at[4])/2+math.random(-v[6],v[6]))
+			local gridpos = Vector(x,y,v[4])
+			local trinfo1 = {start = gridpos,endpos = gridpos+lg_postraceoff}
+			local tr1 = util.TraceLine(trinfo1)
+			local trinfo2 = {start = tr1.HitPos,endpos = tr1.HitPos-lg_postraceoff*2}
+			local tr2 = util.TraceLine(trinfo2)
+			temp[mk] = tr2.HitPos
 		end
+		local cmpdata = util.Compress(util.TableToJSON(temp))
+		net.WriteUInt(#cmpdata,32)
+		net.WriteData(cmpdata,#cmpdata)
 		net.SendToServer()
 	end
 	trbuff = nil
@@ -568,7 +600,7 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 end)
 
 function TOOL:DrawToolScreen(width,height)
-	surface.SetDrawColor(Color(0,0,0,255))
+	surface.SetDrawColor(mcol_black)
 	surface.DrawRect(0,0,width,height)
 	if oldarcnt ~= #t_areas then
 		oldarcnt = #t_areas
@@ -581,7 +613,7 @@ function TOOL:DrawToolScreen(width,height)
 	local width_q = width/4
 	local width_o = width/8
 	local height_h = height/2
-	surface.SetDrawColor(255,255,255,255)
+	surface.SetDrawColor(mcol_white.r,mcol_white.g,mcol_white.b,mcol_white.a)
     surface.DrawRect(0,height-72,width,2)
     surface.DrawRect(width_q-1,height-72,2,72)
 	surface.DrawRect(width_h-1,height-72,2,72)
@@ -668,6 +700,7 @@ function TOOL.BuildCPanel(panel)
 			local class = row:GetColumnText(1)
 			GetConVar('ctools_npc_class'):SetString(class)
 			data_npc = t_npcs[class]
+			NPCBox = npcboxtab[class] or npcboxtab._def
 			if IsValid(form_flagsadd) and form_flagsadd.ReloadFlags then
 				form_flagsadd:ReloadFlags(class)
 			end
@@ -759,6 +792,8 @@ function TOOL.BuildCPanel(panel)
 	combo_prof:UpdateData()
 
 	local entry_mdl = panel:TextEntry('Custom Model:','ctools_npc_model')
+	local check_randskin = panel:CheckBox('Set random model skin on spawn','ctools_npc_skinrandom')
+	check_randskin:SetHeight(20)
 	local slider_skin = panel:NumSlider('Model Skin','ctools_npc_skin',0,31,0)
 	slider_skin:SetHeight(20)
 	local slider_hpstart = panel:NumSlider('Start Health','ctools_npc_hp',0,1000,0)
