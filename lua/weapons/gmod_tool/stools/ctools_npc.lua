@@ -51,6 +51,7 @@ language.Add('tool.ctools_npc.right','Request execution of created spawn areas')
 language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one')
 language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area')
 language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead')
+language.Add('tool.ctools_npc.mscr3','Hold Shift key when changing angle to center on angle marker')
 
 local font =  'Impact' --'Segoe UI'
 for i = 8, 64, 8 do
@@ -63,6 +64,7 @@ TOOL.Information = {
 	{name='reload'},
 	{name='mscr',icon='gui/info'},
 	{name='mscr2',icon='gui/info'},
+	{name='mscr3',icon='gui/info'},
 }
 
 TOOL.Preset = 'Default'
@@ -79,20 +81,21 @@ wepprof[5] = 'Random'
 wepprof[6] = 'Randomly good'
 wepprof[7] = 'Randomly bad'
 
-local npcflags = {}
-npcflags[1] = 'Wait until seen'
-npcflags[2] = 'Gag (no idle sounds until angry)'
-npcflags[4] = 'Fall to ground (not teleport)'
-npcflags[8] = 'Drop healthkit'
-npcflags[16] = 'Don\'t acquire enemies or avoid obstacles'
-npcflags[128] = 'Wait for script'
-npcflags[256] = 'Long visibility and shoot'
-npcflags[512] = 'Fade corpse'
-npcflags[1024] = 'Think outside its potentially visible set'
-npcflags[2048] = 'Template NPC'
-npcflags[4096] = 'Alternate collision for this NPC (player avoidance)'
-npcflags[8192] = 'Don\'t drop weapons'
-npcflags[16384] = 'Ignore player push'
+local npcflags = {
+	{512,	'Fade corpse on death'},
+	{8192,	'Don\'t drop weapons on death'},
+	{8,		'Drop healthkit on death'},
+	{256,	'Increase visibility and shoot distance'},
+	{16384,	'[PHYS] Ignore player push'},
+	{4096,	'[PHYS] Alternate collision (don\'t avoid players)'},
+	{1,		'[IDLE] Remain idle till seen'},
+	{2,		'[IDLE] Make no idle sounds until angry'},
+	{16,	'[IDLE] Don\'t acquire enemies or avoid obstacles'},
+	{128,	'[DEV] Wait for script'},
+	{4,		'[DEV] Fall to ground instead of teleporting'},
+	{1024,	'[DEV] Think outside PVS'},
+	{2048,	'[DEV] Template NPC'},
+}
 
 local npcflagsadd = {}
 npcflagsadd['npc_citizen'] = {}
@@ -110,9 +113,6 @@ npcflagsadd['npc_rollermine'][65536] = 'Friendly'
 npcflagsadd['npc_turret_floor'] = {}
 npcflagsadd['npc_turret_floor'][512] = 'Friendly'
 
-local str_nowep = 'No weapon'
-local str_defwep = 'Default weapon'
-
 TOOL.ClientConVar['class'] = 'Citizen'
 TOOL.ClientConVar['spread'] = 20
 TOOL.ClientConVar['random'] = 0
@@ -129,8 +129,8 @@ TOOL.ClientConVar['squad'] = ''
 TOOL.ClientConVar['maxhp'] = 0
 TOOL.ClientConVar['hp'] = 0
 
-for k,v in SortedPairs(npcflags) do
-	TOOL.ClientConVar['SF_'..k] = 0
+for k,v in ipairs(npcflags) do
+	TOOL.ClientConVar['SF_'..v[1]] = 0
 end
 -- Force SF_NPC_ALWAYSTHINK and SF_NPC_FADE_CORPSE flags
 TOOL.ClientConVar['SF_512'] = 1
@@ -149,18 +149,29 @@ local mat_wireframe = CreateMaterial('cmat_wireframe','Wireframe')
 local mat_solid = CreateMaterial('sadasdas'..math.random(10000),'UnlitGeneric',
 	{['$basetexture'] = 'color/white',['$translucent'] = 1,['$vertexalpha'] = 1,['$vertexcolor'] = 1})
 
-local tex_cornerin = Material('gui/corner512')
-local tex_cornerout = Material('gui/sniper_corner')
+local t_str = {
+	notif_area = 'Not enough area!',
+	notif_limit = 'Too many NPCs!',
+	notif_exec = 'Executing...',
+	notif_undoareacur = 'Undone the current area!',
+	notif_undoarealast = 'Undone last created area!',
+	nowep = 'No weapon',
+	defwep = 'Default weapon',
+}
 
-local mcol_black = Color(0,0,0,255)
-local mcol_white = Color(255,255,255,255)
-local mcol_prewhite = Color(200,200,200,255)
-local mcol_bad = Color(255,64,64,64)
-local mcol_good = Color(64,255,92,64)
-local mcol_completed = Color(128,192,255,64)
-local mcol_line = Color(255,255,255,128)
+local t_col = {
+	black = Color(0,0,0,255),
+	white = Color(255,255,255,255),
+	prewhite = Color(200,200,200,255),
+	area_bad = Color(255,64,64,64),
+	area_good = Color(64,255,92,64),
+	area_placed = Color(128,192,255,64),
+	line = Color(255,255,255,128),
+	ang_body = Color(255,255,255,80),
+	ang_arrow = Color(255,255,255,128),
+}
 
-local soundtab = {
+local t_sound = {
 	success = 'buttons/button14.wav',
 	fail = 'buttons/button11.wav',
 	exec = 'buttons/combine_button1.wav',
@@ -169,7 +180,7 @@ local soundtab = {
 	click_spread = 'buttons/lightswitch2.wav',
 }
 
-local npcboxtab = {
+local t_npcbox = {
 	['_def'] = 26+8,
 	['Antlion'] = 32+16,
 	['Antlion Worker'] = 32+16,
@@ -185,13 +196,15 @@ local npcboxtab = {
 	['Combine Gunship'] = 80+64,
 }
 
+local tex_cornerin = Material('gui/corner512')
+local tex_cornerout = Material('gui/sniper_corner')
+
 local lg_postraceoff = Vector(0,0,512)
-local NPCBox = npcboxtab._def
+local npcbox = t_npcbox._def
 local r_lines_writez = false
 local r_renderoff = 2
 local r_yawmult = 512
-local r_rmkcol = Color(192,192,255,128)
-local r_rmksize = 128
+local r_rmksize = 512
 
 local t_areas = {}
 local t_npcs, t_weps
@@ -204,6 +217,8 @@ local spamtime = CurTime()
 local oldang
 local mx_old = 0
 local yawlerp = 0
+local angcent
+local absolute_lerp = 0
 
 
 local ipairs = ipairs
@@ -282,12 +297,13 @@ local function DrawAngle(pos,ang,sizelimit,ignorez)
 		if ignorez then cam.IgnoreZ(true) end
 			render.PushFilterMag(TEXFILTER.ANISOTROPIC)
 			render.PushFilterMin(TEXFILTER.ANISOTROPIC)
-				surface.SetDrawColor(r_rmkcol.r,r_rmkcol.g,r_rmkcol.b,r_rmkcol.a)
+				surface.SetDrawColor(t_col.ang_body.r,t_col.ang_body.g,t_col.ang_body.b,t_col.ang_body.a)
 				surface.SetMaterial(tex_cornerin)
 				surface.DrawTexturedRectUV(-size,0-size,size,size,0,0,1,1)
 				surface.DrawTexturedRectUV(0,-size,size,size,1,0,0,1)
 				surface.DrawTexturedRectUV(-size,0,size,size,0,1,1,0)
 				surface.DrawTexturedRectUV(0,0,size,size,1,1,0,0)
+				surface.SetDrawColor(t_col.ang_arrow.r,t_col.ang_arrow.g,t_col.ang_arrow.b,t_col.ang_arrow.a)
 				surface.SetMaterial(tex_cornerout)
 				surface.DrawTexturedRect(-size,-size,size,size)
 			render.PopFilterMag()
@@ -298,35 +314,37 @@ end
 
 function TOOL:LeftClick(trace)
 	if spamtime+0.1 > CurTime() then return false end
+	local class = self:GetClientInfo('class')
+	npcbox = t_npcbox[class] or t_npcbox._def
 	trace = trace or lp:GetEyeTrace()
 	spamtime = CurTime()
 	if trbuff then
-		local absolute = NPCBox*math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
-		
+		local absolute = npcbox*math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
 		local maxz = trbuff.z > trace.HitPos.z and trbuff.z or trace.HitPos.z
 		local maxz = angbuff and (trbuff.z > scndbuff.z and trbuff.z or scndbuff.z) or trbuff.z
 		local area = ((angbuff and scndbuff or trace.HitPos)-trbuff)
 		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
 		if by_x < 1 or by_y < 1 then
-			notification.AddLegacy('Not enough area!',NOTIFY_ERROR,2)
-			surface.PlaySound(soundtab.fail)
+			notification.AddLegacy(t_str.notif_area,NOTIFY_ERROR,2)
+			surface.PlaySound(t_sound.fail)
 			trbuff = nil
 			angbuff = nil
 			oldang = nil
 			return false
 		end
 		if by_x*by_y > 16384 then
-			notification.AddLegacy('Too many NPCs!',NOTIFY_ERROR,2)
-			surface.PlaySound(soundtab.fail)
+			notification.AddLegacy(t_str.notif_limit,NOTIFY_ERROR,2)
+			surface.PlaySound(t_sound.fail)
 			trbuff = nil
 			angbuff = nil
 			oldang = nil
 			return false
 		end
 		if !angbuff then
+			angcent = nil
 			angbuff = true
 			scndbuff = lp:GetEyeTrace().HitPos
-			surface.PlaySound(soundtab.success)
+			surface.PlaySound(t_sound.success)
 			return false
 		end
 		local areatab = {}
@@ -343,13 +361,12 @@ function TOOL:LeftClick(trace)
 			end
 		end
 		local flags = 0
-		for k,v in SortedPairs(npcflags) do
-			if self:GetClientNumber('SF_'..k,0) ~= 0 then
-				flags = bit.bor(flags,k)
+		for k,v in ipairs(npcflags) do
+			if self:GetClientNumber('SF_'..v[1],0) ~= 0 then
+				flags = bit.bor(flags,v[1])
 			end
 		end
-		local curclass = self:GetClientInfo('class')
-		local data_npc = t_npcs[curclass]
+		local data_npc = t_npcs[class]
 		if npcflagsadd[data_npc.Class] then
 			for k,v in SortedPairs(npcflagsadd[data_npc.Class]) do
 				local nullflag = bit.bnot(k)
@@ -361,7 +378,7 @@ function TOOL:LeftClick(trace)
 		end
 		local spreadd = math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)
 		local randomm = math.Clamp(self:GetClientNumber('random',0),MIN_RANDOM,MAX_RANDOM)
-		local quickmath = ((NPCBox*spreadd/10-NPCBox/2)/2*randomm/100)
+		local quickmath = ((npcbox*spreadd/10-npcbox/2)/2*randomm/100)
 		local ang = math.NormalizeAngle(angbuff.y)
 		local equip = self:GetClientInfo('equip')
 		local equipbool = !equip or equip == ''
@@ -380,7 +397,7 @@ function TOOL:LeftClick(trace)
 			maxz,
 			spreadd,
 			quickmath,
-			curclass,
+			class,
 			ang,
 			flags,
 			equipbool,
@@ -398,15 +415,16 @@ function TOOL:LeftClick(trace)
 			self:GetClientNumber('maxhp',100),
 			self:GetClientNumber('hp',100) ~= 0,
 			self:GetClientNumber('hp',100),
+			npcbox,
 		}
 		trbuff = nil
 		angbuff = nil
 		oldang = nil
-		surface.PlaySound(soundtab.success)
+		surface.PlaySound(t_sound.success)
 		return false
 	end
 	trbuff = trace.HitPos
-	surface.PlaySound(soundtab.success)
+	surface.PlaySound(t_sound.success)
 	return false
 end
 
@@ -417,12 +435,12 @@ function TOOL:RightClick(trace)
 	if trbuff and angbuff then return false end
 	if trbuff then
 		trbuff = nil
-		surface.PlaySound(soundtab.success)
+		surface.PlaySound(t_sound.success)
 		return false
 	end
 	if !t_areas[1] then return false end
-	notification.AddLegacy('Executing...',NOTIFY_GENERIC,2)
-	surface.PlaySound(soundtab.exec)
+	notification.AddLegacy(t_str.notif_exec,NOTIFY_GENERIC,2)
+	surface.PlaySound(t_sound.exec)
 	for k,v in ipairs(t_areas) do
 		net.Start('ctnpces')
 		net.WriteString(v[7])
@@ -481,14 +499,14 @@ function TOOL:Reload()
 		trbuff = nil
 		angbuff = nil
 		oldang = nil
-		surface.PlaySound(soundtab.undo)
-		notification.AddLegacy('Undone the current area!',NOTIFY_UNDO,2)
+		surface.PlaySound(t_sound.undo)
+		notification.AddLegacy(t_str.notif_undoareacur,NOTIFY_UNDO,2)
 		return false
 	end
 	if t_areas[#t_areas] then
 		t_areas[#t_areas] = nil
-		surface.PlaySound(soundtab.undo)
-		notification.AddLegacy('Undone last created area!',NOTIFY_UNDO,2)
+		surface.PlaySound(t_sound.undo)
+		notification.AddLegacy(t_str.notif_undoarealast,NOTIFY_UNDO,2)
 		return false
 	end
 end
@@ -506,7 +524,11 @@ hook.Add('CreateMove','ctools_npc',function(cmd)
 		if !oldang then
 			oldang = cmd:GetViewAngles()
 		end
-		cmd:SetViewAngles(oldang)
+		local angtoset = oldang
+		if cmd:KeyDown(IN_SPEED) and angcent then
+			angtoset = (angcent-lp:GetShootPos()):Angle()
+		end
+		cmd:SetViewAngles(angtoset)
 		local mx = cmd:GetMouseX()
 		mx_old = mx_old-mx/16
 		angbuff = Angle(0,math.floor(mx_old/15)*15,0)
@@ -525,14 +547,14 @@ hook.Add('CreateMove','ctools_npc',function(cmd)
 		cvar = lp:GetTool():GetClientNumber('random',0)
 		nmin, nmax = MIN_RANDOM, MAX_RANDOM
 		if var:GetInt() > MIN_RANDOM and var:GetInt() < MAX_RANDOM then
-			EmitSound(soundtab.click_random,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
+			EmitSound(t_sound.click_random,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
 		end
 	else
 		var = GetConVar('ctools_npc_spread')
 		cvar = lp:GetTool():GetClientNumber('spread',20)
 		nmin, nmax = MIN_SPREAD, MAX_SPREAD
 		if var:GetInt() > MIN_SPREAD and var:GetInt() < MAX_SPREAD then
-			EmitSound(soundtab.click_spread,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
+			EmitSound(t_sound.click_spread,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
 		end
 	end
 	if !var then return angbuff end
@@ -548,50 +570,55 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 	if trbuff then
 		local curtr = lp:GetEyeTrace().HitPos
 		local strbuff = angbuff and scndbuff or curtr
-		local absolute = NPCBox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
+		local absolute = npcbox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
 		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)
 		local area = (strbuff-trbuff)
 		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
 		arx, ary = by_x, by_y
+		absolute_lerp = Lerp(0.2,absolute_lerp,absolute)
 		local actbad = (by_x < 1 or by_y < 1)
 		local secondpos = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+by_y*absolute*sy,maxz)
-		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,actbad and mcol_bad or mcol_good)
+		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,actbad and t_col.area_bad or t_col.area_good)
 		if !actbad then
 			for i = 1, by_x+1 do
-				local v1 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y,maxz+r_renderoff)
-				local v2 = Vector(trbuff.x+absolute*(i-1)*sx,trbuff.y+by_y*absolute*sy,maxz+r_renderoff)
-				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
+				local v1 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y+by_y*absolute_lerp*sy,maxz+r_renderoff)
+				render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 			end
 			for i = 1, by_y+1 do
-				local v1 = Vector(trbuff.x,trbuff.y+absolute*(i-1)*sy,maxz+r_renderoff)
-				local v2 = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+absolute*(i-1)*sy,maxz+r_renderoff)
-				render.DrawLine(v1,v2,mcol_line,r_lines_writez)
+				local v1 = Vector(trbuff.x,trbuff.y+absolute_lerp*(i-1)*sy,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+by_x*absolute_lerp*sx,trbuff.y+absolute_lerp*(i-1)*sy,maxz+r_renderoff)
+				render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 			end
 		end
 		if angbuff then
-			local orig = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
-			yawlerp = Lerp(0.25,yawlerp,angbuff.y)
-			local angsizelimit = math.min(by_x*absolute,by_y*absolute)
-			DrawAngle(orig,yawlerp,angsizelimit,true)
+			if !angcent then
+				angcent = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
+			end
+			if angbuff ~= true then
+				yawlerp = Lerp(0.25,yawlerp,angbuff.y)
+				local angsizelimit = math.min(by_x*absolute,by_y*absolute)
+				DrawAngle(angcent,yawlerp,angsizelimit,true)
+			end
 		end
 	end
 	for _,at in ipairs(t_areas) do
-		local absolute = NPCBox*at[5]/10
+		local absolute = at[25]*at[5]/10
 		local area = at[2]-at[1]
 		local maxz = at[4]
 		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
-		DrawArea(Vector(at[1].x,at[1].y,maxz),Vector(at[1].x+absolute*by_x*sx,at[1].y+absolute*by_y*sy,maxz),mat_solid,mcol_completed)
+		DrawArea(Vector(at[1].x,at[1].y,maxz),Vector(at[1].x+absolute*by_x*sx,at[1].y+absolute*by_y*sy,maxz),mat_solid,t_col.area_placed)
 		for i = 1, by_x+1 do
 			local v1 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y,maxz+r_renderoff)
 			local v2 = Vector(at[1].x+absolute*(i-1)*sx,at[1].y+by_y*absolute*sy,maxz+r_renderoff)
-			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
+			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 		end
 		for i = 1, by_y+1 do
 			local v1 = Vector(at[1].x,at[1].y+absolute*(i-1)*sy,maxz+r_renderoff)
 			local v2 = Vector(at[1].x+by_x*absolute*sx,at[1].y+absolute*(i-1)*sy,maxz+r_renderoff)
-			render.DrawLine(v1,v2,mcol_line,r_lines_writez)
+			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 		end
 		local orig = Vector(at[1].x+absolute*sx*by_x/2,at[1].y+absolute*sy*by_y/2,maxz)
 		local angsizelimit = math.min(by_x*absolute,by_y*absolute)
@@ -600,7 +627,7 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 end)
 
 function TOOL:DrawToolScreen(width,height)
-	surface.SetDrawColor(mcol_black)
+	surface.SetDrawColor(t_col.black)
 	surface.DrawRect(0,0,width,height)
 	if oldarcnt ~= #t_areas then
 		oldarcnt = #t_areas
@@ -613,7 +640,7 @@ function TOOL:DrawToolScreen(width,height)
 	local width_q = width/4
 	local width_o = width/8
 	local height_h = height/2
-	surface.SetDrawColor(mcol_white.r,mcol_white.g,mcol_white.b,mcol_white.a)
+	surface.SetDrawColor(t_col.white.r,t_col.white.g,t_col.white.b,t_col.white.a)
     surface.DrawRect(0,height-72,width,2)
     surface.DrawRect(width_q-1,height-72,2,72)
 	surface.DrawRect(width_h-1,height-72,2,72)
@@ -622,19 +649,19 @@ function TOOL:DrawToolScreen(width,height)
 	local rnd = self:GetClientNumber('random')
 	local sprd_font = sprd >= 1000 and 'CTOOLS_NPC_40' or (sprd >= 100 and 'CTOOLS_NPC_48' or 'CTOOLS_NPC_64')
 	local rnd_font = rnd >= 100 and 'CTOOLS_NPC_48' or 'CTOOLS_NPC_64'
-	draw.SimpleText(sprd,sprd_font,width_o,height-48,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText('SPREAD','CTOOLS_NPC_16',width_o,height-16,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(rnd,rnd_font,width_q+width_o,height-48,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText('RANDOM','CTOOLS_NPC_16',width_q+width_o,height-16,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(arnpccnt..' NPCs','CTOOLS_NPC_32',width-width_q,height-56,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(oldarcnt..' Areas','CTOOLS_NPC_32',width-width_q,height-20,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(self:GetClientInfo('class'),'CTOOLS_NPC_32',width_h,24,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(sprd,sprd_font,width_o,height-48,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText('SPREAD','CTOOLS_NPC_16',width_o,height-16,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(rnd,rnd_font,width_q+width_o,height-48,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText('RANDOM','CTOOLS_NPC_16',width_q+width_o,height-16,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(arnpccnt..' NPCs','CTOOLS_NPC_32',width-width_q,height-56,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(oldarcnt..' Areas','CTOOLS_NPC_32',width-width_q,height-20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(self:GetClientInfo('class'),'CTOOLS_NPC_32',width_h,24,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	if trbuff then
-		draw.SimpleText(arx*ary,'CTOOLS_NPC_64',width_h,height_h-56,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('NPC to be spawned','CTOOLS_NPC_24',width_h,height_h-48+32,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('X','CTOOLS_NPC_56',width_h,height_h+20,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(arx,'CTOOLS_NPC_64',width_q,height_h+20,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(ary,'CTOOLS_NPC_64',width-width_q,height_h+20,mcol_prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx*ary,'CTOOLS_NPC_64',width_h,height_h-56,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('NPC to be spawned','CTOOLS_NPC_24',width_h,height_h-48+32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('X','CTOOLS_NPC_56',width_h,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx,'CTOOLS_NPC_64',width_q,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(ary,'CTOOLS_NPC_64',width-width_q,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	end
 end
 
@@ -700,7 +727,7 @@ function TOOL.BuildCPanel(panel)
 			local class = row:GetColumnText(1)
 			GetConVar('ctools_npc_class'):SetString(class)
 			data_npc = t_npcs[class]
-			NPCBox = npcboxtab[class] or npcboxtab._def
+			npcbox = t_npcbox[class] or t_npcbox._def
 			if IsValid(form_flagsadd) and form_flagsadd.ReloadFlags then
 				form_flagsadd:ReloadFlags(class)
 			end
@@ -726,8 +753,8 @@ function TOOL.BuildCPanel(panel)
 	list_selectwep:AddColumn('Weapon Class')
 	list_selectwep.UpdateData = function(self,wep)
 		list_selectwep:Clear()
-		local line_nowep = list_selectwep:AddLine(str_nowep)
-		local line_defwep = list_selectwep:AddLine(str_defwep)
+		local line_nowep = list_selectwep:AddLine(t_str.nowep)
+		local line_defwep = list_selectwep:AddLine(t_str.defwep)
 		local filter = string.lower(entry_srchwep:GetValue())
 		local weptab = {}
 		for k,v in pairs(t_weps) do
@@ -747,8 +774,8 @@ function TOOL.BuildCPanel(panel)
 		list_selectwep.OnRowSelected = function(clist,rowid,row)
 			if row and row.GetColumnText and row:GetColumnText(1) then
 				local selwep = row:GetColumnText(1)
-				local weptouse = selwep == str_nowep and '' or selwep
-				weptouse = weptouse == str_defwep and '_def' or weptouse
+				local weptouse = selwep == t_str.nowep and '' or selwep
+				weptouse = weptouse == t_str.defwep and '_def' or weptouse
 				GetConVar('ctools_npc_equip'):SetString(weptouse)
 			end
 		end
@@ -777,6 +804,7 @@ function TOOL.BuildCPanel(panel)
 	end
 
 	local combo_prof = panel:ComboBox('Proficiency','ctools_npc_wepprof')
+	combo_prof:SetMinimumSize(nil,20)
 	combo_prof:SetSortItems(false)
 	function combo_prof.UpdateData()
 		combo_prof:Clear()
@@ -801,7 +829,6 @@ function TOOL.BuildCPanel(panel)
 	local slider_hpmax = panel:NumSlider('Max Health','ctools_npc_maxhp',0,1000,0)
 	slider_hpmax:SetHeight(20)
 	local check_ignoreply = panel:CheckBox('Ignore me','ctools_npc_ignoreply')
-	check_ignoreply:SetHeight(20)
 	local check_ignoreplys = panel:CheckBox('Ignore all players','ctools_npc_ignoreplys')
 	local check_immobile = panel:CheckBox('NPC can\'t move','ctools_npc_immobile')
 
@@ -809,9 +836,9 @@ function TOOL.BuildCPanel(panel)
 	panel:AddItem(form_flags)
 	form_flags:SetExpanded(true)
 	form_flags:SetName('Spawn Flags')
-	for k,v in SortedPairs(npcflags) do
-		local fstr = 'SF_'..k
-		local check_flag = form_flags:CheckBox(v,'ctools_npc_'..fstr)
+	for k,v in ipairs(npcflags) do
+		local fstr = 'SF_'..v[1]
+		local check_flag = form_flags:CheckBox(v[2],'ctools_npc_'..fstr)
 		check_flag.OnChange = function(self,bool)
 			GetConVar('ctools_npc_'..fstr):SetInt(bool and 1 or 0)
 		end
