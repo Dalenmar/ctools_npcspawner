@@ -51,7 +51,6 @@ language.Add('tool.ctools_npc.right','Request execution of created spawn areas')
 language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one')
 language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area')
 language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead')
-language.Add('tool.ctools_npc.mscr3','Hold Shift key when changing angle to center on angle marker')
 
 local font =  'Impact' --'Segoe UI'
 for i = 8, 64, 8 do
@@ -64,7 +63,6 @@ TOOL.Information = {
 	{name='reload'},
 	{name='mscr',icon='gui/info'},
 	{name='mscr2',icon='gui/info'},
-	{name='mscr3',icon='gui/info'},
 }
 
 TOOL.Preset = 'Default'
@@ -203,7 +201,6 @@ local lg_postraceoff = Vector(0,0,512)
 local npcbox = t_npcbox._def
 local r_lines_writez = false
 local r_renderoff = 2
-local r_yawmult = 512
 local r_rmksize = 512
 
 local t_areas = {}
@@ -214,9 +211,7 @@ local trbuff, scndbuff, angbuff
 local lp = NULL
 local arx, ary = 0, 0
 local spamtime = CurTime()
-local oldang
-local mx_old = 0
-local yawlerp = 0
+local yawlerp = Angle(0,0,0)
 local angcent
 local absolute_lerp = 0
 
@@ -227,6 +222,7 @@ local math = math
 local cam = cam
 local render = render
 local surface = surface
+local draw = draw
 
 
 
@@ -292,8 +288,7 @@ local function DrawAngle(pos,ang,sizelimit,ignorez)
 	local lpunder = lp:GetShootPos().z < pos.z
 	local ar = lpunder and 180 or 0
 	local yadd = lpunder and -90 or 0
-	ang = Angle(0,ang-135+yadd,ar)
-	cam.Start3D2D(pos+Vector(0,0,r_renderoff),ang,1)
+	cam.Start3D2D(pos+Vector(0,0,r_renderoff),ang+Angle(0,-135+yadd,ar),1)
 		if ignorez then cam.IgnoreZ(true) end
 			render.PushFilterMag(TEXFILTER.ANISOTROPIC)
 			render.PushFilterMin(TEXFILTER.ANISOTROPIC)
@@ -329,7 +324,6 @@ function TOOL:LeftClick(trace)
 			surface.PlaySound(t_sound.fail)
 			trbuff = nil
 			angbuff = nil
-			oldang = nil
 			return false
 		end
 		if by_x*by_y > 16384 then
@@ -337,7 +331,6 @@ function TOOL:LeftClick(trace)
 			surface.PlaySound(t_sound.fail)
 			trbuff = nil
 			angbuff = nil
-			oldang = nil
 			return false
 		end
 		if !angbuff then
@@ -379,7 +372,6 @@ function TOOL:LeftClick(trace)
 		local spreadd = math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)
 		local randomm = math.Clamp(self:GetClientNumber('random',0),MIN_RANDOM,MAX_RANDOM)
 		local quickmath = ((npcbox*spreadd/10-npcbox/2)/2*randomm/100)
-		local ang = math.NormalizeAngle(angbuff.y)
 		local equip = self:GetClientInfo('equip')
 		local equipbool = !equip or equip == ''
 		local equip_class
@@ -398,7 +390,7 @@ function TOOL:LeftClick(trace)
 			spreadd,
 			quickmath,
 			class,
-			ang,
+			angbuff,
 			flags,
 			equipbool,
 			equip_class or equip,
@@ -419,7 +411,6 @@ function TOOL:LeftClick(trace)
 		}
 		trbuff = nil
 		angbuff = nil
-		oldang = nil
 		surface.PlaySound(t_sound.success)
 		return false
 	end
@@ -444,7 +435,7 @@ function TOOL:RightClick(trace)
 	for k,v in ipairs(t_areas) do
 		net.Start('ctnpces')
 		net.WriteString(v[7])
-		net.WriteInt(v[8],9)
+		net.WriteInt(v[8].y,9)
 		net.WriteUInt(v[9],32)
 		net.WriteBool(v[10])
 		if !v[10] then
@@ -498,7 +489,6 @@ function TOOL:Reload()
 	if trbuff then
 		trbuff = nil
 		angbuff = nil
-		oldang = nil
 		surface.PlaySound(t_sound.undo)
 		notification.AddLegacy(t_str.notif_undoareacur,NOTIFY_UNDO,2)
 		return false
@@ -516,29 +506,15 @@ function TOOL:Deploy() end
 function TOOL:Holster()
 	trbuff = nil
 	angbuff = nil
-	oldang = nil
 end
 
 hook.Add('CreateMove','ctools_npc',function(cmd)
-	if angbuff then
-		if !oldang then
-			oldang = cmd:GetViewAngles()
-		end
-		local angtoset = oldang
-		if cmd:KeyDown(IN_SPEED) and angcent then
-			angtoset = (angcent-lp:GetShootPos()):Angle()
-		end
-		cmd:SetViewAngles(angtoset)
-		local mx = cmd:GetMouseX()
-		mx_old = mx_old-mx/16
-		angbuff = Angle(0,math.floor(mx_old/15)*15,0)
-	end
-	if !trbuff then return angbuff end
+	if !trbuff then return end
 	local nullcmdnum = cmd:CommandNumber() == 0
 	local scrollup = input.WasMousePressed(MOUSE_WHEEL_UP) and nullcmdnum
 	local scrolldown = input.WasMousePressed(MOUSE_WHEEL_DOWN) and nullcmdnum
 	local shiftdown = input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)
-	if !scrollup and !scrolldown then return angbuff end
+	if !scrollup and !scrolldown then return end
 	local nmin, nmax
 	local var, cvar
 	local step = scrolldown and -2 or 2
@@ -557,7 +533,7 @@ hook.Add('CreateMove','ctools_npc',function(cmd)
 			EmitSound(t_sound.click_spread,Vector(0,0,0),-2,CHAN_AUTO,0.25,75,0,255,0)
 		end
 	end
-	if !var then return angbuff end
+	if !var then return end
 	var:SetInt(math.Clamp(cvar+step,nmin,nmax))
 end)
 
@@ -568,7 +544,8 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 	if lp:GetActiveWeapon():GetClass() ~= 'gmod_tool' then return end
 	if !lp:GetTool() or lp:GetTool():GetMode() ~= 'ctools_npc' then return end
 	if trbuff then
-		local curtr = lp:GetEyeTrace().HitPos
+		local lptr = lp:GetEyeTrace()
+		local curtr = lptr.HitPos
 		local strbuff = angbuff and scndbuff or curtr
 		local absolute = npcbox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
 		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)
@@ -596,8 +573,11 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 			if !angcent then
 				angcent = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
 			end
+			local anghitpos = util.IntersectRayWithPlane(lptr.StartPos,lptr.Normal,angcent,Vector(0,0,1))
+			local ang = ((anghitpos or curtr)-angcent):Angle()
+			angbuff = Angle(0,math.floor((ang.y+7.5)/15)*15,0)
 			if angbuff ~= true then
-				yawlerp = Lerp(0.25,yawlerp,angbuff.y)
+				yawlerp = LerpAngle(0.25,yawlerp,angbuff)
 				local angsizelimit = math.min(by_x*absolute,by_y*absolute)
 				DrawAngle(angcent,yawlerp,angsizelimit,true)
 			end
