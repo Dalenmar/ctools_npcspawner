@@ -1,13 +1,10 @@
-local t_requests = {}
-local t_spawnednpcs = {}
-local t_npcs = {}
-local req_key
-
 local net = net
 local undo = undo
 local next = next
-
-
+local math = math
+local ipairs = ipairs
+local pairs = pairs
+local CurTime = CurTime
 
 
 local flags = FCVAR_ARCHIVE+FCVAR_LUA_SERVER+FCVAR_SERVER_CAN_EXECUTE
@@ -23,224 +20,318 @@ cvars.AddChangeCallback('ct_npc_amount',function()
 end)
 
 
+local t_requests = {}
+local t_spawnednpcs = {}
+local t_npcs = {}
+local req_key = 1
+local postraceoff = Vector(0,0,512)
 
 
 util.AddNetworkString('ctnpces')
 
-hook.Add('InitPostEntity','ctools_npc',function()
+
+local function RequestClear(id)
+	t_requests[id] = nil
+	local temp = {}
+	for k,v in pairs(t_requests) do
+		temp[#temp+1] = v
+	end
+	t_requests = temp
+end
+
+local function InitNPCList()
 	local npctab = list.Get('NPC')
 	for k,v in pairs(npctab) do
 		t_npcs[v.Name] = v
 	end
-end)
+end
 
-net.Receive('ctnpces',function(len,ply)
-	local af = #t_requests+1
-	t_requests[af] = {}
-	local reqt = t_requests[af]
-	reqt.ply = ply
-	reqt.npckey = #t_spawnednpcs+1
-	t_spawnednpcs[reqt.npckey] = {}
-	reqt.info = {}
-	reqt.info[1] = net.ReadString()
-	reqt.info[2] = net.ReadInt(9)
-	reqt.info[3] = net.ReadUInt(32)
-	reqt.info[4] = net.ReadBool()
-	if !reqt.info[4] then
-		reqt.info[5] = net.ReadString()
-	end
-	reqt.info[6] = net.ReadBool()
-	if reqt.info[6] then
-		reqt.info[7] = net.ReadString()
-	end
-	reqt.info[8] = net.ReadInt(6)
-	reqt.info[9] = net.ReadUInt(3)
-	reqt.info[10] = net.ReadBool()
-	reqt.info[11] = net.ReadBool()
-	reqt.info[12] = net.ReadBool()
-	reqt.info[13] = net.ReadBool()
-	if reqt.info[13] then
-		reqt.info[14] = net.ReadString()
-	end
-	reqt.info[15] = net.ReadBool()
-	if reqt.info[15] then
-		reqt.info[16] = net.ReadUInt(32)
-	end
-	reqt.info[17] = net.ReadBool()
-	if reqt.info[17] then
-		reqt.info[18] = net.ReadUInt(32)
-	end
+local function ReceiveData(len,ply)
 	local cmplen = net.ReadUInt(32)
 	local cmpdata = net.ReadData(cmplen)
-	reqt.info[19] = util.JSONToTable(util.Decompress(cmpdata))
-	if !cmpdata then
-		t_requests[af] = nil
+	local data = util.JSONToTable(util.Decompress(cmpdata))
+	if !data then return end
+
+	for k,v in ipairs(data) do
+		local af = #t_requests+1
+		t_requests[af] = {}
+		local reqt = t_requests[af]
+		reqt.ply = ply
+		reqt.npckey = #t_spawnednpcs+1
+		t_spawnednpcs[reqt.npckey] = {}
+		reqt.info = v
+		local info = reqt.info
+
+		-- POSITION GRID
+		local areatab = {}
+		for i = 1, info.by_x do
+			for j = 1, info.by_y do
+				areatab[#areatab+1] = {
+					info.pos_start.x+i*info.abs*info.ssx,
+					info.pos_start.y+j*info.abs*info.ssy,
+					info.pos_start.x+(i-1)*info.abs*info.ssx,
+					info.pos_start.y+(j-1)*info.abs*info.ssy,
+				}
+			end
+		end
+		t_requests[af].info.areatab = areatab
+
+		-- SPAWN METHOD
+		if info.sm_method == 3 then
+			t_requests[af].info.ts = info.sm_total < 1 and math.huge or CurTime()+info.sm_total
+		elseif info.sm_method == 2 then
+			if info.sm_total == 0 then
+				t_requests[af].info.sm_total = math.huge
+			end
+		end
+
+		-- UNDO
+		undo.Create('NPC')
+			undo.SetCustomUndoText('Undone NPC Area')
+			undo.AddFunction(function(tab,args)
+				for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
+					if !IsValid(v) then continue end
+					v:Remove()
+				end
+				RequestClear(af)
+				t_spawnednpcs[reqt.npckey] = nil
+			end)
+			undo.SetPlayer(ply)
+		undo.Finish('NPC Area')
+	end
+end
+
+local function CalculatePos(req_id,pos_id)
+	local info = t_requests[req_id].info
+	local x = math.Round((info.areatab[pos_id][1]+info.areatab[pos_id][3])/2+math.random(-info.random,info.random))
+	local y = math.Round((info.areatab[pos_id][2]+info.areatab[pos_id][4])/2+math.random(-info.random,info.random))
+	local gridpos = Vector(x,y,info.maxz)
+	local trinfo1 = {start = gridpos,endpos = gridpos+postraceoff}
+	local tr1 = util.TraceLine(trinfo1)
+	if tr1.StartSolid then
+		t_requests[req_id].info.areatab[pos_id] = nil
 		return
 	end
-	undo.Create('NPC')
-		undo.SetCustomUndoText('Undone NPC Area')
-		undo.AddFunction(function(tab,args)
-			for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
-				if !IsValid(v) then continue end
-				v:Remove()
-			end
-			t_requests[af] = nil
-			t_spawnednpcs[reqt.npckey] = nil
-		end)
-		undo.SetPlayer(ply)
-	undo.Finish('NPC Area')
-end)
+	local trinfo2 = {start = tr1.HitPos,endpos = tr1.HitPos-postraceoff*2}
+	local tr2 = util.TraceLine(trinfo2)
+	if IsValid(tr2.HitEntity) and tr2.HitEntity:IsNPC() then return end
+	return tr2.HitPos
+end
 
-hook.Add('Tick','ctools_npc',function()
-	if !req_key or !t_requests[req_key] then
-		req_key = next(t_requests)
+local function SpawnNPC(req_id,pos_id)
+	local reqt = t_requests[req_id]
+	if !reqt then return end
+	local info = reqt.info
+	
+	-- CLASS CHECK
+	local NPCData = t_npcs[info.class]
+	if !NPCData or !NPCData.Class then
+		RequestClear(req_key)
+		return
 	end
+
+	-- POSITION CHECK
+	local pos = CalculatePos(req_id,pos_id)
+	if !pos then return end
+
+	-- CREATION
+	local npc = ents.Create(NPCData.Class)
+	if !IsValid(npc) then
+		RequestClear(req_key)
+		return
+	end
+	t_spawnednpcs[reqt.npckey][#(t_spawnednpcs[reqt.npckey])+1] = npc
+	if info.sm_method == 1 then
+		t_requests[req_id].info.areatab[pos_id] = nil
+	else
+		t_requests[req_id].info.areatab[pos_id].npc = npc
+	end
+
+	-- POSITION & ANGLES
+	local posoff = Vector(0,0,NPCData.Offset or 32)
+	npc:SetPos(pos+posoff)
+	npc:SetAngles(info.angle or Angle(0,0,0))
+
+	-- SPAWNFLAGS
+	local sfs = info.flags
+	if NPCData.SpawnFlags then
+		sfs = bit.bor(sfs,NPCData.SpawnFlags)
+	end
+	if NPCData.TotalSpawnFlags then
+		sfs = NPCData.TotalSpawnFlags
+	end
+	npc:SetKeyValue('spawnflags',sfs)
+	npc.SpawnFlags = sfs
+
+	-- KEYVALUES
+	if NPCData.KeyValues then
+		for k,v in pairs(NPCData.KeyValues) do
+			npc:SetKeyValue(k,v)
+		end
+	end
+	if info.squad then
+		npc:SetKeyValue('SquadName',info.squad)
+		npc:Fire('setsquad',info.squad)
+	end
+	--npc:SetKeyValue('startburrowed','1')
+	--npc:Fire('unburrow')
+
+	-- MODEL
+	if NPCData.Model then
+		npc:SetModel(NPCData.Model)
+	end
+	if info.model and util.IsValidModel(info.model) then
+		npc:SetModel(info.model)
+	end
+
+	-- MATERIAL
+	if NPCData.Material then
+		npc:SetMaterial(NPCData.Material)
+	end
+
+	-- WEAPON
+	if info.equip == '_def' then
+		if istable(NPCData.Weapons) then
+			local eqwep = NPCData.Weapons[math.random(#NPCData.Weapons)]
+			npc:SetKeyValue('additionalequipment',eqwep)
+		end
+	elseif info.equip and info.equip ~= '' then
+		npc:SetKeyValue('additionalequipment',info.equip)
+	end
+
+	-- SPAWN
+	npc:Spawn()
+	npc:Activate()
+
+	-- SKIN
+	if NPCData.Skin then
+		npc:SetSkin(NPCData.Skin)
+	end
+	if info.skin == 1 then
+		local randskin = math.random(1,npc:SkinCount())-1
+		npc:SetSkin(randskin)
+	elseif info.skin > 1 then
+		npc:SetSkin(info.skin-1)
+	end
+
+	-- BODYGROUPS
+	if NPCData.BodyGroups then
+		for k,v in pairs(NPCData.BodyGroups) do
+			npc:SetBodygroup(k,v)
+		end
+	end
+
+	-- WEAPON PROFICIENCY
+	local prof = info.prof
+	if info.prof == 5 then
+		prof = math.random(0,4)
+	elseif info.prof == 6 then
+		prof = math.random(2,4)
+	elseif info.prof == 7 then
+		prof = math.random(0,2)
+	elseif info.prof == 8 then
+		prof = nil
+	end
+	if prof and npc.SetCurrentWeaponProficiency then
+		npc:SetCurrentWeaponProficiency(prof)
+	end
+
+	-- RELATIONSHIPS
+	if info.ignoreply and npc.AddEntityRelationship then
+		npc:AddEntityRelationship(reqt.ply,D_LI,99)
+	end
+	if info.ignoreplys and npc.AddRelationship then
+		npc:AddRelationship('player D_LI 99')
+	end
+
+	-- MOVEMENT
+	if info.immobile and npc.CapabilitiesRemove then
+		npc:CapabilitiesRemove(CAP_MOVE_GROUND)
+		npc:CapabilitiesRemove(CAP_MOVE_FLY)
+		npc:CapabilitiesRemove(CAP_MOVE_CLIMB)
+		npc:CapabilitiesRemove(CAP_MOVE_SWIM)
+	end
+
+	-- HEALTH
+	if info.maxhp then
+		npc:SetMaxHealth(info.maxhp)
+	end
+	if info.hp then
+		npc:SetHealth(info.hp)
+	elseif NPCData.Health then
+		npc:SetHealth(NPCData.Health)
+	end
+
+	-- DROP TO FLOOR
+	if !NPCData.NoDrop and !NPCData.OnCeiling then --!NPCData.OnFloor
+		npc:DropToFloor()
+	end
+	
+	-- TOTAL COUNT
+	if info.sm_method == 2 then
+		t_requests[req_id].info.sm_total = info.sm_total - 1
+	end
+end
+
+local function GetArea(req_id)
+	local reqt = t_requests[req_id]
+	local info = reqt.info
+	local sm_def = info.sm_method == 1
+	local temp = {}
+	for k,v in pairs(info.areatab) do
+		if !sm_def and IsValid(v.npc) then continue end
+		temp[#temp+1] = k
+	end
+	local t_key = info.sm_random and math.random(#temp) or #temp
+	return temp[t_key]
+end
+
+local function SpawnThink()
+	local req_cnt = #t_requests
+	if req_cnt == 0 then return end
+	--req_key = ((req_key+1)%req_cnt)+1
+	req_key = math.random(req_cnt)
 	local reqt = t_requests[req_key]
 	if !reqt then return end
-
-	for i = 1, npc_per_tick do
-		local posi = #reqt.info[19]
-		if posi == 0 then
-			t_requests[req_key] = nil
-			break
-		end
-
-		local NPCData = t_npcs[reqt.info[1]]
-		if !NPCData or !NPCData.Class then continue end
-
-		local npc = ents.Create(NPCData.Class)
-		if !IsValid(npc) then continue end
-		t_spawnednpcs[reqt.npckey][#(t_spawnednpcs[reqt.npckey])+1] = npc
-
-		-- POSITION
-		local posoff = NPCData.Offset or 32
-		local pos = reqt.info[19][posi]+Vector(0,0,posoff)
-		if !util.IsInWorld(pos) then
-			reqt.info[19][posi] = nil
-			continue
-		end
-		npc:SetPos(pos)
-		reqt.info[19][posi] = nil
-		
-
-		-- ANGLES
-		local ang = Angle(0,reqt.info[2],0)
-		--[[
-			if NPCData.Rotate then
-				ang = ang + NPCData.Rotate
-			end
-		]]
-		npc:SetAngles(ang)
-
-		-- SPAWNFLAGS
-		local sfs = reqt.info[3]
-		if NPCData.SpawnFlags then
-			sfs = bit.bor(sfs,NPCData.SpawnFlags)
-		end
-		if NPCData.TotalSpawnFlags then
-			sfs = NPCData.TotalSpawnFlags
-		end
-		npc:SetKeyValue('spawnflags',sfs)
-		npc.SpawnFlags = sfs
-
-		-- KEYVALUES
-		if NPCData.KeyValues then
-			for k,v in pairs(NPCData.KeyValues) do
-				npc:SetKeyValue(k,v)
+	local info = reqt.info
+	local sm_def = info.sm_method == 1
+	if !sm_def then
+		if info.sm_method == 3 then
+			if info.ts < CurTime() then
+				RequestClear(req_key)
+				return
 			end
 		end
-		if reqt.info[13] then
-			npc:SetKeyValue('SquadName',reqt.info[14])
-			npc:Fire('setsquad',reqt.info[14],0)
+		local cnt = 0
+		for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
+			if !IsValid(v) then continue end
+			cnt = cnt + 1
 		end
-
-		-- MODEL
-		if NPCData.Model then
-			npc:SetModel(NPCData.Model)
+		local alive_cnt = info.sm_alive == 0 and info.by_x*info.by_y or info.sm_alive
+		if cnt >= alive_cnt then
+			return
 		end
-		if reqt.info[6] and util.IsValidModel(reqt.info[7]) then
-			npc:SetModel(reqt.info[7])
-		end
-
-		-- MATERIAL
-		if NPCData.Material then
-			npc:SetMaterial(NPCData.Material)
-		end
-
-		-- WEAPON
-		if !reqt.info[4] then
-			if reqt.info[5] == '_def' then
-				if istable(NPCData.Weapons) then
-					local eqwep = NPCData.Weapons[math.random(#NPCData.Weapons)]
-					npc:SetKeyValue('additionalequipment',eqwep)
-				end
-			elseif reqt.info[5] ~= '' then
-				npc:SetKeyValue('additionalequipment',reqt.info[5])
-			end
-		end
-
-		-- SPAWN
-		npc:Spawn()
-		npc:Activate()
-
-		-- SKIN
-		if NPCData.Skin then
-			npc:SetSkin(NPCData.Skin)
-		end
-		if reqt.info[8] < 0 then
-			local randskin = math.random(1,npc:SkinCount())-1
-			npc:SetSkin(randskin)
-		else
-			npc:SetSkin(reqt.info[8])
-		end
-
-		-- BODYGROUPS
-		if NPCData.BodyGroups then
-			for k,v in pairs(NPCData.BodyGroups) do
-				npc:SetBodygroup(k,v)
-			end
-		end
-
-		-- WEAPON PROFICIENCY
-		local prof = reqt.info[9]
-		if reqt.info[9] == 5 then
-			prof = math.random(0,4)
-		elseif reqt.info[9] == 6 then
-			prof = math.random(2,4)
-		elseif reqt.info[9] == 7 then
-			prof = math.random(0,2)
-		end
-		npc:SetCurrentWeaponProficiency(prof)
-
-		-- RELATIONSHIPS
-		if reqt.info[10] then
-			npc:AddEntityRelationship(reqt.ply,D_LI,99)
-		end
-		if reqt.info[11] then
-			npc:AddRelationship('player D_LI 99')
-		end
-
-		-- MOVEMENT
-		if reqt.info[12] then
-			npc:CapabilitiesRemove(CAP_MOVE_GROUND)
-			npc:CapabilitiesRemove(CAP_MOVE_FLY)
-			npc:CapabilitiesRemove(CAP_MOVE_CLIMB)
-			npc:CapabilitiesRemove(CAP_MOVE_SWIM)
-		end
-		
-		-- HEALTH
-		if reqt.info[15] then
-			npc:SetMaxHealth(reqt.info[16])
-		end
-		if reqt.info[17] then
-			npc:SetHealth(reqt.info[18])
-		elseif NPCData.Health then
-			npc:SetHealth( NPCData.Health )
-		end
-
-		-- DROP TO FLOOR
-		if !NPCData.NoDrop and !NPCData.OnCeiling then --!NPCData.OnFloor
-			npc:DropToFloor()
+		if info.sm_method == 2 and info.sm_total < 0 then
+			RequestClear(req_key)
+			return
 		end
 	end
-end)
+
+	for i = 1, npc_per_tick do
+		local posi = GetArea(req_key)
+		if (!posi or posi == 0) then
+			if sm_def then
+				RequestClear(req_key)
+			end
+			continue
+		end
+		SpawnNPC(req_key,posi)
+	end
+end
+
+
+
+
+net.Receive('ctnpces',ReceiveData)
+hook.Add('InitPostEntity','ctools_npc',InitNPCList)
+hook.Add('Tick','ctools_npc',SpawnThink)
