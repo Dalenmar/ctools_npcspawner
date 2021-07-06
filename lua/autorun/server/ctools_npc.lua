@@ -1,6 +1,5 @@
 local net = net
 local undo = undo
-local next = next
 local math = math
 local ipairs = ipairs
 local pairs = pairs

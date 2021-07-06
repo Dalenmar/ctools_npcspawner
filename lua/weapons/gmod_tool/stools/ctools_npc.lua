@@ -2,61 +2,7 @@ TOOL.Category = 'Chromium Tools'
 TOOL.Name = 'NPC Spawner'
 TOOL.Command = nil
 TOOL.ConfigName = ''
-
-
-
-
-if SERVER then
-	if game.SinglePlayer() then
-		util.AddNetworkString('ctdamnprediction')
-
-		local function SendNet(num)
-			net.Start('ctdamnprediction')
-				net.WriteUInt(num,3)
-			net.Send(Entity(1))
-		end
-
-		function TOOL:LeftClick() SendNet(0) end
-		function TOOL:RightClick() SendNet(1) end
-		function TOOL:Reload() SendNet(2) end
-		function TOOL:Deploy() SendNet(3) end
-		function TOOL:Holster() SendNet(4) end
-	end
-	return
-end
-
-if game.SinglePlayer() then
-	net.Receive('ctdamnprediction',function()
-		local num = net.ReadUInt(3)
-		local tooltab = LocalPlayer():GetTool('ctools_npc')
-		if !tooltab then return end
-		if num == 0 then
-			tooltab:LeftClick()
-		elseif num == 1 then
-			tooltab:RightClick()
-		elseif num == 2 then
-			tooltab:Reload()
-		elseif num == 3 then
-			tooltab:Deploy()
-		elseif num == 4 then
-			tooltab:Holster()
-		end
-	end)
-end
-
-language.Add('tool.ctools_npc.name','Chromium NPC Spawner')
-language.Add('tool.ctools_npc.desc','Simple and flexible NPC Spawner Tool')
-language.Add('tool.ctools_npc.left','Create a new spawn area')
-language.Add('tool.ctools_npc.right','Request execution of created spawn areas')
-language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one')
-language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area')
-language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead')
-
-local font =  'Impact' --'Segoe UI'
-for i = 8, 64, 8 do
-	surface.CreateFont('CTOOLS_NPC_'..i,{font = font,size = i})
-end
-
+TOOL.Preset = 'Default'
 TOOL.Information = {
 	{name='left'},
 	{name='right'},
@@ -65,98 +11,90 @@ TOOL.Information = {
 	{name='mscr2',icon='gui/info'},
 }
 
-TOOL.Preset = 'Default'
 
-local WeaponTable = {}
 
-local wepprof = {
-	{8,'Default'},
-	{WEAPON_PROFICIENCY_POOR, 'Poor'},
-	{WEAPON_PROFICIENCY_AVERAGE, 'Average'},
-	{WEAPON_PROFICIENCY_GOOD, 'Good'},
-	{WEAPON_PROFICIENCY_VERY_GOOD, 'Very good'},
-	{WEAPON_PROFICIENCY_PERFECT, 'Perfect'},
-	{5, 'Random'},
-	{6, 'Random good'},
-	{7, 'Random bad'},
-}
-
-local npcflags = {
-	{512,	'Fade corpse on death'},
-	{8192,	'Don\'t drop weapons on death'},
-	{8,		'Drop healthkit on death'},
-	{256,	'Increase visibility and shoot distance'},
-	{16384,	'[PHYS] Ignore player push'},
-	{4096,	'[PHYS] Alternate collision (don\'t avoid players)'},
-	{1,		'[IDLE] Remain idle till seen'},
-	{2,		'[IDLE] Make no idle sounds until angry'},
-	{16,	'[IDLE] Don\'t acquire enemies or avoid obstacles'},
-	{128,	'[DEV] Wait for script'},
-	{4,		'[DEV] Fall to ground instead of teleporting'},
-	{1024,	'[DEV] Think outside PVS'},
-	{2048,	'[DEV] Template NPC'},
-}
-
-local npcflagsadd = {}
-npcflagsadd['npc_citizen'] = {}
-npcflagsadd['npc_citizen'][65536] = 'Follow player on spawn'
-npcflagsadd['npc_citizen'][131072] = 'Medic'
-npcflagsadd['npc_citizen'][262144] = 'Random head'
-npcflagsadd['npc_citizen'][524288] = 'Ammo resupplier'
-npcflagsadd['npc_citizen'][1048576] = 'Not commandable (cannot join players squad)'
-npcflagsadd['npc_citizen'][4194304] = 'Random male head'
-npcflagsadd['npc_citizen'][8388608] = 'Random female head'
-npcflagsadd['npc_citizen'][16777216] = 'Use render bounds instead of human hull (for NPCs sitting in chairs, etc.)'
-npcflagsadd['npc_citizen'][2097152] = 'Work outside the speech semaphore system'
-npcflagsadd['npc_rollermine'] = {}
-npcflagsadd['npc_rollermine'][65536] = 'Friendly'
-npcflagsadd['npc_turret_floor'] = {}
-npcflagsadd['npc_turret_floor'][512] = 'Friendly'
-
-TOOL.ClientConVar['class'] = 'Citizen'
-TOOL.ClientConVar['spread'] = 20
-TOOL.ClientConVar['random'] = 0
-TOOL.ClientConVar['yaw'] = 0
-TOOL.ClientConVar['equip'] = '_def'
-TOOL.ClientConVar['model'] = ''
-TOOL.ClientConVar['skin'] = 0
-TOOL.ClientConVar['wepprof'] = 2
-TOOL.ClientConVar['ignoreply'] = 0
-TOOL.ClientConVar['ignoreplys'] = 0
-TOOL.ClientConVar['immobile'] = 0
-TOOL.ClientConVar['squad'] = ''
-TOOL.ClientConVar['maxhp'] = 0
-TOOL.ClientConVar['hp'] = 0
-TOOL.ClientConVar['sm_method'] = 1
-TOOL.ClientConVar['sm_removal'] = 1
-TOOL.ClientConVar['sm_respdelay'] = 0
-TOOL.ClientConVar['sm_alive'] = 0
-TOOL.ClientConVar['sm_total'] = 0
-TOOL.ClientConVar['sm_random'] = 1
-
-for k,v in ipairs(npcflags) do
-	TOOL.ClientConVar['SF_'..v[1]] = 0
-end
--- Force SF_NPC_ALWAYSTHINK and SF_NPC_FADE_CORPSE flags
-TOOL.ClientConVar['SF_512'] = 1
-TOOL.ClientConVar['SF_1024'] = 1
-
-for k,v in pairs(npcflagsadd) do
-	for k1,v1 in SortedPairs(v) do
-		TOOL.ClientConVar['SFA_'..k..'_'..k1] = 0
+if game.SinglePlayer() then
+	if SERVER then
+		if game.SinglePlayer() then
+			util.AddNetworkString('ctdamnprediction')
+			local function SendNet(num)
+				net.Start('ctdamnprediction')
+					net.WriteUInt(num,3)
+				net.Send(Entity(1))
+			end
+			function TOOL:LeftClick() SendNet(0) end
+			function TOOL:RightClick() SendNet(1) end
+			function TOOL:Reload() SendNet(2) end
+			function TOOL:Deploy() SendNet(3) end
+			function TOOL:Holster() SendNet(4) end
+		end
+	else
+		net.Receive('ctdamnprediction',function()
+			local num = net.ReadUInt(3)
+			local tooltab = LocalPlayer():GetTool('ctools_npc')
+			if !tooltab then return end
+			if num == 0 then
+				tooltab:LeftClick()
+			elseif num == 1 then
+				tooltab:RightClick()
+			elseif num == 2 then
+				tooltab:Reload()
+			elseif num == 3 then
+				tooltab:Deploy()
+			elseif num == 4 then
+				tooltab:Holster()
+			end
+		end)
 	end
 end
 
-local ConVarsDefault = TOOL:BuildConVarList()
+if SERVER then return end
+
+
+
+
+local net = net
+local CurTime = CurTime
+local ipairs = ipairs
+local pairs = pairs
+local math = math
+local string = string
+local cam = cam
+local render = render
+local surface = surface
+local draw = draw
+
+
+
+
+local mat_wireframe = CreateMaterial('cmat_wireframe','Wireframe')
+local mat_solid = CreateMaterial('cmat_solid','UnlitGeneric',{['$basetexture'] = 'color/white',['$translucent'] = 1,['$vertexalpha'] = 1,['$vertexcolor'] = 1})
+local tex_cornerin = Material('gui/corner512')
+local tex_cornerout = Material('gui/sniper_corner')
+
+local NPC_LIMIT = 1024
 local MIN_SPREAD, MAX_SPREAD = 10, 1000
 local MIN_RANDOM, MAX_RANDOM = 0, 100
-local mat_wireframe = CreateMaterial('cmat_wireframe','Wireframe')
-local mat_solid = CreateMaterial('sadasdas'..math.random(10000),'UnlitGeneric',
-	{['$basetexture'] = 'color/white',['$translucent'] = 1,['$vertexalpha'] = 1,['$vertexcolor'] = 1})
+local npcbox = 26+8
+local r_lines_writez = false
+local r_renderoff = 2
+local r_rmksize = 512
+
+local t_areas = {}
+local t_npcs, t_weps
+local data_npc, data_weps
+local oldarcnt, arnpccnt = 0, 0
+local trbuff, scndbuff, angbuff
+local lp = NULL
+local arx, ary = 0, 0
+local spamtime = CurTime()
+local yawlerp = Angle(0,0,0)
+local angcent
+local absolute_lerp = 0
 
 local t_str = {
 	notif_area = 'Not enough area!',
-	notif_limit = 'Too many NPCs!',
+	notif_limit = 'The area is too large! Unhealthy amount of NPCs for the server',
 	notif_exec = 'Executing (sending %sB of data...)',
 	notif_undoareacur = 'Undone the current area!',
 	notif_undoarealast = 'Undone last created area!',
@@ -165,7 +103,7 @@ local t_str = {
 }
 
 local t_col = {
-	black = Color(0,0,0,255),
+	black = Color(16,16,24,255),
 	white = Color(255,255,255,255),
 	prewhite = Color(200,200,200,255),
 	area_bad = Color(255,64,64,64),
@@ -201,46 +139,126 @@ local t_npcbox = {
 	['Combine Gunship'] = 80+64,
 }
 
-local spawnmethods = {
-	'Default',
-	'Amount (respawn)',
-	'Timer (respawn)',
+local t_spawnmethods = {
+	{'Default','NPCs will be spawned across the area (no respawning)'},
+	{'Amount (respawn)','NPCs will respawn till total amount of X is reached'},
+	{'Timer (respawn)','NPCs will respawn while the timer is active'},
 }
 
-local sm_help = {
-	'NPCs will be spawned across the area (no respawning)',
-	'NPCs will respawn till total amount of X is reached',
-	'NPCs will respawn while the timer is active',
+local t_wepprof = {
+	{8,'Default'},
+	{WEAPON_PROFICIENCY_POOR, 'Poor'},
+	{WEAPON_PROFICIENCY_AVERAGE, 'Average'},
+	{WEAPON_PROFICIENCY_GOOD, 'Good'},
+	{WEAPON_PROFICIENCY_VERY_GOOD, 'Very good'},
+	{WEAPON_PROFICIENCY_PERFECT, 'Perfect'},
+	{5, 'Random'},
+	{6, 'Random good'},
+	{7, 'Random bad'},
 }
 
-local tex_cornerin = Material('gui/corner512')
-local tex_cornerout = Material('gui/sniper_corner')
+local t_npcflags = {
+	{512,	'Fade corpse on death'},
+	{8192,	'Don\'t drop weapons on death'},
+	{8,		'Drop healthkit on death'},
+	{256,	'Increase visibility and shoot distance'},
+	{16384,	'[PHYS] Ignore player push'},
+	{4096,	'[PHYS] Alternate collision (don\'t avoid players)'},
+	{1,		'[IDLE] Remain idle till seen'},
+	{2,		'[IDLE] Make no idle sounds until angry'},
+	{16,	'[IDLE] Don\'t acquire enemies or avoid obstacles'},
+	{128,	'[DEV] Wait for script'},
+	{4,		'[DEV] Fall to ground instead of teleporting'},
+	{1024,	'[DEV] Think outside PVS'},
+	{2048,	'[DEV] Template NPC'},
+}
 
-local npcbox = t_npcbox._def
-local r_lines_writez = false
-local r_renderoff = 2
-local r_rmksize = 512
+local t_npcflagsadd = {
+	npc_citizen = {
+		[65536] = 'Follow player on spawn',
+		[131072] = 'Medic',
+		[262144] = 'Random head',
+		[524288] = 'Ammo resupplier',
+		[1048576] = 'Not commandable (cannot join players squad)',
+		[4194304] = 'Random male head',
+		[8388608] = 'Random female head',
+		[16777216] = 'Use render bounds instead of human hull (for NPCs sitting in chairs, etc.)',
+		[2097152] = 'Work outside the speech semaphore system',
+	},
+	npc_rollermine = {
+		[65536] = 'Friendly',
+	},
+	npc_turret_floor = {
+		[512] = 'Friendly',
+	},
+}
 
-local t_areas = {}
-local t_npcs, t_weps
-local data_npc, data_weps
-local oldarcnt, arnpccnt = 0, 0
-local trbuff, scndbuff, angbuff
-local lp = NULL
-local arx, ary = 0, 0
-local spamtime = CurTime()
-local yawlerp = Angle(0,0,0)
-local angcent
-local absolute_lerp = 0
 
 
-local ipairs = ipairs
-local pairs = pairs
-local math = math
-local cam = cam
-local render = render
-local surface = surface
-local draw = draw
+
+TOOL.ClientConVar['class'] = 'Citizen'
+TOOL.ClientConVar['spread'] = 20
+TOOL.ClientConVar['random'] = 0
+TOOL.ClientConVar['yaw'] = 0
+TOOL.ClientConVar['equip'] = '_def'
+TOOL.ClientConVar['model'] = ''
+TOOL.ClientConVar['skin'] = 0
+TOOL.ClientConVar['wepprof'] = 2
+TOOL.ClientConVar['ignoreply'] = 0
+TOOL.ClientConVar['ignoreplys'] = 0
+TOOL.ClientConVar['immobile'] = 0
+TOOL.ClientConVar['squad'] = ''
+TOOL.ClientConVar['maxhp'] = 0
+TOOL.ClientConVar['hp'] = 0
+TOOL.ClientConVar['sm_method'] = 1
+TOOL.ClientConVar['sm_removal'] = 1
+TOOL.ClientConVar['sm_respdelay'] = 0
+TOOL.ClientConVar['sm_alive'] = 0
+TOOL.ClientConVar['sm_total'] = 0
+TOOL.ClientConVar['sm_random'] = 1
+
+for k,v in ipairs(t_npcflags) do
+	TOOL.ClientConVar['SF_'..v[1]] = 0
+end
+-- Force SF_NPC_ALWAYSTHINK and SF_NPC_FADE_CORPSE flags
+TOOL.ClientConVar['SF_512'] = 1
+TOOL.ClientConVar['SF_1024'] = 1
+
+for k,v in pairs(t_npcflagsadd) do
+	for k1,v1 in SortedPairs(v) do
+		TOOL.ClientConVar['SFA_'..k..'_'..k1] = 0
+	end
+end
+
+local ConVarsDefault = TOOL:BuildConVarList()
+
+
+language.Add('tool.ctools_npc.name','Chromium NPC Spawner')
+language.Add('tool.ctools_npc.desc','Simple and flexible NPC Spawner Tool')
+language.Add('tool.ctools_npc.left','Create a new spawn area')
+language.Add('tool.ctools_npc.right','Request execution of created spawn areas')
+language.Add('tool.ctools_npc.reload','Remove last created spawn area or undo the current one')
+language.Add('tool.ctools_npc.mscr','Scroll up/down to increase/decrease spread multiplier when creating an area')
+language.Add('tool.ctools_npc.mscr2','Hold Shift key when scrolling to change randomness instead')
+
+local font = 'Staatliches Regular'
+local t_fonts = {
+	num_1 = 40,
+	num_2 = 56,
+	num_3 = 72,
+	num_4 = 80,
+	str_csleft = 28,
+	str_cxright = 32,
+	str_cxnum = 28,
+	str_cxx = 48,
+	str_class = 32,
+}
+
+for id,size in pairs(t_fonts) do
+	local f_str = 'ctools_npc_'..size
+	surface.CreateFont(f_str,{font = font,size = size})
+	t_fonts[id] = f_str
+end
 
 
 
@@ -265,7 +283,13 @@ function TOOL:LeftClick(trace)
 			angbuff = nil
 			return false
 		end
-		if by_x*by_y > 16384 then
+		local npc_cnt = by_x*by_y
+		local sm_method = self:GetClientNumber('sm_method',1)
+		local sm_total = self:GetClientNumber('sm_total',0)
+		local sm_alive = self:GetClientNumber('sm_alive',0)
+		local npc_total = sm_method == 2 and (sm_total ~= 0 and sm_total or npc_cnt) or npc_cnt
+		local npc_alive = sm_method ~= 1 and (sm_alive ~= 0 and sm_alive or npc_cnt) or npc_cnt
+		if !(npc_total < NPC_LIMIT or npc_alive < NPC_LIMIT or npc_cnt < NPC_LIMIT) then
 			notification.AddLegacy(t_str.notif_limit,NOTIFY_ERROR,2)
 			surface.PlaySound(t_sound.fail)
 			trbuff = nil
@@ -281,14 +305,14 @@ function TOOL:LeftClick(trace)
 		end
 
 		local flags = 0
-		for k,v in ipairs(npcflags) do
+		for k,v in ipairs(t_npcflags) do
 			if self:GetClientNumber('SF_'..v[1],0) ~= 0 then
 				flags = bit.bor(flags,v[1])
 			end
 		end
 		local data_npc = t_npcs[class]
-		if npcflagsadd[data_npc.Class] then
-			for k,v in SortedPairs(npcflagsadd[data_npc.Class]) do
+		if t_npcflagsadd[data_npc.Class] then
+			for k,v in SortedPairs(t_npcflagsadd[data_npc.Class]) do
 				local nullflag = bit.bnot(k)
 				flags = bit.band(flags,nullflag)
 				if self:GetClientNumber('SFA_'..data_npc.Class..'_'..k,0) ~= 0 then
@@ -413,28 +437,30 @@ function TOOL:DrawToolScreen(width,height)
 	local width_q = width/4
 	local width_o = width/8
 	local height_h = height/2
+	
+	local btop = 72
 	surface.SetDrawColor(t_col.white.r,t_col.white.g,t_col.white.b,t_col.white.a)
-    surface.DrawRect(0,height-72,width,2)
-    surface.DrawRect(width_q-1,height-72,2,72)
-	surface.DrawRect(width_h-1,height-72,2,72)
-	surface.DrawRect(width_h,height-36-1,width,2)
+    surface.DrawRect(0,height-btop,width,2)
+    surface.DrawRect(width_q-1,height-btop,2,btop)
+	surface.DrawRect(width_h-1,height-btop,2,btop)
+	surface.DrawRect(width_h,height-btop/2-1,width,2)
 	local sprd = self:GetClientNumber('spread')
 	local rnd = self:GetClientNumber('random')
-	local sprd_font = sprd >= 1000 and 'CTOOLS_NPC_40' or (sprd >= 100 and 'CTOOLS_NPC_48' or 'CTOOLS_NPC_64')
-	local rnd_font = rnd >= 100 and 'CTOOLS_NPC_48' or 'CTOOLS_NPC_64'
-	draw.SimpleText(sprd,sprd_font,width_o,height-48,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText('SPREAD','CTOOLS_NPC_16',width_o,height-16,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(rnd,rnd_font,width_q+width_o,height-48,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText('RANDOM','CTOOLS_NPC_16',width_q+width_o,height-16,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(arnpccnt..' NPCs','CTOOLS_NPC_32',width-width_q,height-56,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(oldarcnt..' Areas','CTOOLS_NPC_32',width-width_q,height-20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(self:GetClientInfo('class'),'CTOOLS_NPC_32',width_h,24,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	local sprd_font = sprd >= 1000 and t_fonts.num_1 or (sprd >= 100 and t_fonts.num_2 or t_fonts.num_3)
+	local rnd_font = rnd >= 100 and t_fonts.num_2 or t_fonts.num_3
+	draw.SimpleText(sprd,sprd_font,width_o,height-44,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText('SPREAD',t_fonts.str_csleft,width_o,height-12,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(rnd,rnd_font,width_q+width_o,height-44,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText('RANDOM',t_fonts.str_csleft,width_q+width_o,height-12,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(arnpccnt..' NPCs',t_fonts.str_cxright,width-width_q,height-54,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(oldarcnt..' Areas',t_fonts.str_cxright,width-width_q,height-18,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(self:GetClientInfo('class'),t_fonts.str_class,width_h,24,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	if trbuff then
-		draw.SimpleText(arx*ary,'CTOOLS_NPC_64',width_h,height_h-56,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('NPC to be spawned','CTOOLS_NPC_24',width_h,height_h-48+32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('X','CTOOLS_NPC_56',width_h,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(arx,'CTOOLS_NPC_64',width_q,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(ary,'CTOOLS_NPC_64',width-width_q,height_h+20,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx*ary,t_fonts.num_4,width_h,height_h-52,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('NPCs to be spawned',t_fonts.str_cxnum,width_h,height_h-12,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('X',t_fonts.str_cxx,width_h,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx,t_fonts.num_4,width_q,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(ary,t_fonts.num_4,width-width_q,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	end
 end
 
@@ -452,10 +478,10 @@ function TOOL.BuildCPanel(panel)
 			end
 		end
 		local data_npc = t_npcs[class]
-		if !npcflagsadd[data_npc.Class] then return end
+		if !t_npcflagsadd[data_npc.Class] then return end
 		local help_ms = form_flagsadd:ControlHelp('Additional flags, specific for '..data_npc.Class)
 		help_ms.ToBeUpdated = true
-		for k,v in SortedPairs(npcflagsadd[data_npc.Class]) do
+		for k,v in SortedPairs(t_npcflagsadd[data_npc.Class]) do
 			local fstr = 'SFA_'..data_npc.Class..'_'..k
 			local check_flag = form_flagsadd:CheckBox(v,'ctools_npc_'..fstr)
 			check_flag.OnChange = function(self,bool)
@@ -466,7 +492,6 @@ function TOOL.BuildCPanel(panel)
 	end
 
 	local presetpanel = panel:AddControl('ComboBox', {MenuButton = 1, Folder = 'ctools_npc', Options = {['#preset.default'] = ConVarsDefault}, CVars = table.GetKeys(ConVarsDefault)})
-	
 
 	local slider_spread = panel:NumSlider('Spread multiplier','ctools_npc_spread',MIN_SPREAD,MAX_SPREAD,0)
 	slider_spread:SetHeight(20)
@@ -519,17 +544,17 @@ function TOOL.BuildCPanel(panel)
 		method:SetSortItems(false)
 		
 		local cursm = GetConVar('ctools_npc_sm_method'):GetInt()
-		for k,v in ipairs(spawnmethods) do
-			method:AddChoice(v,k,cursm == v)
+		for k,v in ipairs(t_spawnmethods) do
+			method:AddChoice(v[1],k,cursm == v[1])
 		end
 		function method:OnSelect(index,value,data)
 			-- Why the fuck doesn't it work without SetInt???
 			GetConVar('ctools_npc_sm_method'):SetInt(data)
-			help_method:SetText(sm_help[data])
+			help_method:SetText(t_spawnmethods[data][2])
 			method_list:MakeAdditional(data)
 		end
 
-		help_method = method_list:ControlHelp(sm_help[cursm or 1])
+		help_method = method_list:ControlHelp(t_spawnmethods[cursm or 1][2])
 
 		local check_randomize = method_list:CheckBox('Randomize spawn','ctools_npc_sm_random')
 		check_randomize:SetHeight(20)
@@ -654,7 +679,7 @@ function TOOL.BuildCPanel(panel)
 	function combo_prof.UpdateData()
 		combo_prof:Clear()
 		local curprof = GetConVar('ctools_npc_wepprof'):GetInt()
-		for k,v in ipairs(wepprof) do
+		for k,v in ipairs(t_wepprof) do
 			combo_prof:AddChoice(v[2],v[1],curprof == v[1])
 		end
 	end
@@ -694,7 +719,7 @@ function TOOL.BuildCPanel(panel)
 	panel:AddItem(form_flags)
 	form_flags:SetExpanded(false)
 	form_flags:SetName('Spawn Flags')
-	for k,v in ipairs(npcflags) do
+	for k,v in ipairs(t_npcflags) do
 		local fstr = 'SF_'..v[1]
 		local check_flag = form_flags:CheckBox(v[2],'ctools_npc_'..fstr)
 		check_flag.OnChange = function(self,bool)
@@ -755,8 +780,7 @@ local function DrawAngle(pos,ang,sizelimit,ignorez)
 	cam.End3D2D()
 end
 
-
-hook.Add('InitPostEntity','ctools_npc',function()
+local function ToolInit()
 	lp = LocalPlayer()
 	t_npcs = {}
 	local npctab = list.Get('NPC')
@@ -779,18 +803,26 @@ hook.Add('InitPostEntity','ctools_npc',function()
 		local wtab = {class = v.class,name = name,category = 'NPC'}
 		t_weps[name] = wtab
 	end
-end)
+	local cvar_class = GetConVar('ctools_npc_class')
+	local cvar_equip = GetConVar('ctools_npc_equip')
+	if !npctab[cvar_class:GetString()] then
+		cvar_class:SetString('Citizen')
+	end
+	if !npctab[cvar_equip:GetString()] then
+		cvar_equip:SetString('_def')
+	end
+end
 
-hook.Add('PlayerBindPress','ctools_npc', function(ply,bind)
+local function PreventBind(ply,bind)
 	if !trbuff then return end
 	local wep = ply:GetActiveWeapon()
 	if !IsValid(wep) or wep:GetClass() ~= 'gmod_tool' then return end
 	if ply:GetTool().Mode ~= 'ctools_npc' then return end
 	if input.IsMouseDown(MOUSE_WHEEL_DOWN) and input.LookupKeyBinding(MOUSE_WHEEL_DOWN) == bind then return true end
 	if input.IsMouseDown(MOUSE_WHEEL_UP) and input.LookupKeyBinding(MOUSE_WHEEL_UP) == bind then return true end
-end)
+end
 
-hook.Add('CreateMove','ctools_npc',function(cmd)
+local function ControlMouseWheel(cmd)
 	if !trbuff then return end
 	local nullcmdnum = cmd:CommandNumber() == 0
 	local scrollup = input.WasMousePressed(MOUSE_WHEEL_UP) and nullcmdnum
@@ -817,9 +849,9 @@ hook.Add('CreateMove','ctools_npc',function(cmd)
 	end
 	if !var then return end
 	var:SetInt(math.Clamp(cvar+step,nmin,nmax))
-end)
+end
 
-hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
+local function DrawVisuals(bDepth,bSkybox)
 	if bSkybox then return end
 	if !IsValid(lp) then return end
 	if !IsValid(lp:GetActiveWeapon()) then return end
@@ -832,25 +864,25 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 		local absolute = npcbox*math.Clamp(lp:GetTool():GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
 		local maxz = (trbuff.z > strbuff.z and trbuff.z or strbuff.z)
 		local area = (strbuff-trbuff)
-		local by_x, by_y = math.floor(math.abs(area.x)/absolute), math.floor(math.abs(area.y)/absolute)
+		local by_x = math.floor(math.abs(area.x)/absolute)
+		local by_y = math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
 		arx, ary = by_x, by_y
 		absolute_lerp = Lerp(0.2,absolute_lerp,absolute)
-		local actbad = (by_x < 1 or by_y < 1)
+		local col_area = (by_x < 1 or by_y < 1) and t_col.area_bad or t_col.area_good
 		local secondpos = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+by_y*absolute*sy,maxz)
-		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,actbad and t_col.area_bad or t_col.area_good)
-		if !actbad then
-			for i = 1, by_x+1 do
+		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,col_area)
+		local lx, ly = math.max(by_x,1), math.max(by_y,1)
+			for i = 1, lx+1 do
 				local v1 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y,maxz+r_renderoff)
-				local v2 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y+by_y*absolute_lerp*sy,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y+ly*absolute_lerp*sy,maxz+r_renderoff)
 				render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 			end
-			for i = 1, by_y+1 do
+			for i = 1, ly+1 do
 				local v1 = Vector(trbuff.x,trbuff.y+absolute_lerp*(i-1)*sy,maxz+r_renderoff)
-				local v2 = Vector(trbuff.x+by_x*absolute_lerp*sx,trbuff.y+absolute_lerp*(i-1)*sy,maxz+r_renderoff)
+				local v2 = Vector(trbuff.x+lx*absolute_lerp*sx,trbuff.y+absolute_lerp*(i-1)*sy,maxz+r_renderoff)
 				render.DrawLine(v1,v2,t_col.line,r_lines_writez)
 			end
-		end
 		if angbuff then
 			if !angcent then
 				angcent = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
@@ -881,4 +913,19 @@ hook.Add('PostDrawTranslucentRenderables','ctools_npc',function(bDepth,bSkybox)
 		local angsizelimit = math.min(at.by_x*at.abs,at.by_y*at.abs)
 		DrawAngle(orig,at.angle,angsizelimit)
 	end
+end
+
+hook.Add('CanTool','!ctools_npc',function(ply,tr,toolname,tool,button)
+	-- does not work
+	if toolname ~= 'ctools_npc' then return end
+	return true
 end)
+
+
+
+
+hook.Add('InitPostEntity','ctools_npc',ToolInit)
+hook.Add('PlayerBindPress','ctools_npc',PreventBind)
+hook.Add('CreateMove','ctools_npc',ControlMouseWheel)
+hook.Add('PostDrawTranslucentRenderables','ctools_npc',DrawVisuals)
+hook.Add('CanTool','!ctools_npc',CanToolFix)
