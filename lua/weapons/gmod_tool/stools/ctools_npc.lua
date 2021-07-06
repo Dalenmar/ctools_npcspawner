@@ -128,6 +128,8 @@ TOOL.ClientConVar['squad'] = ''
 TOOL.ClientConVar['maxhp'] = 0
 TOOL.ClientConVar['hp'] = 0
 TOOL.ClientConVar['sm_method'] = 1
+TOOL.ClientConVar['sm_removal'] = 1
+TOOL.ClientConVar['sm_respdelay'] = 0
 TOOL.ClientConVar['sm_alive'] = 0
 TOOL.ClientConVar['sm_total'] = 0
 TOOL.ClientConVar['sm_random'] = 1
@@ -297,12 +299,13 @@ function TOOL:LeftClick(trace)
 
 		local sm_method = self:GetClientNumber('sm_method',1)
 		local random = math.Clamp(self:GetClientNumber('random',0),MIN_RANDOM,MAX_RANDOM)
+		local rand_calc = ((absolute-npcbox/2)/2*random/100)
 		local equip = self:GetClientInfo('equip')
 		t_areas[#t_areas+1] = {
 			pos_start = trbuff,
 			pos_end = scndbuff,
 			spread = math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD),
-			random = ((absolute-npcbox/2)/2*random/100),
+			random = rand_calc,
 			class = class,
 			angle = angbuff,
 			flags = flags,
@@ -310,14 +313,16 @@ function TOOL:LeftClick(trace)
 			model = #self:GetClientInfo('model') > 4 and self:GetClientInfo('model') or nil,
 			skin = self:GetClientNumber('skin',0),
 			prof = self:GetClientNumber('wepprof',2),
-			ignoreply = tobool(self:GetClientNumber('ignoreply',0)),
-			ignoreplys = tobool(self:GetClientNumber('ignoreplys',0)),
-			immobile = tobool(self:GetClientNumber('immobile',0)),
+			ignoreply = self:GetClientNumber('ignoreply',0) == 1 and true or nil,
+			ignoreplys = self:GetClientNumber('ignoreplys',0) == 1 and true or nil,
+			immobile = self:GetClientNumber('immobile',0) == 1 and true or nil,
 			squad = (#self:GetClientInfo('squad') > 0 and self:GetClientInfo('squad') ~= '') and self:GetClientInfo('squad') or nil,
 			hp = self:GetClientNumber('hp',100) ~= 0 and self:GetClientNumber('hp',100) or nil,
 			maxhp = self:GetClientNumber('maxhp',100) ~= 0 and self:GetClientNumber('maxhp',100) or nil,
 			npcbox = npcbox,
 			sm_method = sm_method,
+			sm_removal = self:GetClientNumber('sm_removal',1) == 1 and true or nil,
+			sm_respdelay = self:GetClientNumber('sm_respdelay',0) ~= 0 and self:GetClientNumber('sm_respdelay',0) or nil,
 			sm_alive = sm_method ~= 1 and self:GetClientNumber('sm_alive',0) or nil,
 			sm_total = sm_method ~= 1 and self:GetClientNumber('sm_total',0) or nil,
 			sm_random = self:GetClientNumber('sm_random',1) ~= 0,
@@ -448,6 +453,8 @@ function TOOL.BuildCPanel(panel)
 		end
 		local data_npc = t_npcs[class]
 		if !npcflagsadd[data_npc.Class] then return end
+		local help_ms = form_flagsadd:ControlHelp('Additional flags, specific for '..data_npc.Class)
+		help_ms.ToBeUpdated = true
 		for k,v in SortedPairs(npcflagsadd[data_npc.Class]) do
 			local fstr = 'SFA_'..data_npc.Class..'_'..k
 			local check_flag = form_flagsadd:CheckBox(v,'ctools_npc_'..fstr)
@@ -469,13 +476,48 @@ function TOOL.BuildCPanel(panel)
 	local method_list = vgui.Create('DForm',panel)
 	panel:AddItem(method_list)
 	method_list:SetName('NPC Spawn Method')
+	method_list.addpanels = {}
+
+	function method_list:MakeAdditional(sm)
+		for k,v in ipairs(method_list.addpanels) do
+			v:Remove()
+		end
+		if sm == 1 then return end
+		local check_removal = method_list:CheckBox('Remove spawned NPCs on removal','ctools_npc_sm_removal')
+		check_removal:SetHeight(20)
+		method_list.addpanels[#method_list.addpanels+1] = check_removal
+		
+		local slider_respdel = method_list:NumSlider('Respawn delay','ctools_npc_sm_respdelay',0,30,0)
+		slider_respdel:SetHeight(cursm == 1 and 0 or 20)
+		method_list.addpanels[#method_list.addpanels+1] = slider_respdel
+
+		local st_str = sm == 3 and 'Timer (in seconds)' or 'Total NPC amount'
+		local slider_total = method_list:NumSlider(st_str,'ctools_npc_sm_total',0,100,0)
+		slider_total:SetHeight(cursm == 1 and 0 or 20)
+		local textarea = slider_total:GetTextArea()
+		function textarea:OnValueChange(str)
+			if str ~= '0' then return end
+			textarea:SetText('Infinite')
+		end
+		method_list.addpanels[#method_list.addpanels+1] = slider_total
+
+		local slider_alive = method_list:NumSlider('Maximum alive NPCs','ctools_npc_sm_alive',0,100,0)
+		slider_alive:SetHeight(cursm == 1 and 0 or 20)
+		local textarea = slider_alive:GetTextArea()
+		function textarea:OnValueChange(str)
+			if str ~= '0' then return end
+			textarea:SetText('Area size')
+		end
+		method_list.addpanels[#method_list.addpanels+1] = slider_alive
+	end
 
 	method_list.UpdateData = function(self,class)
-		local slider_alive, slider_total, help_method
+		local help_method
 
 		local method = method_list:ComboBox('Method','ctools_npc_sm_method')
 		method:SetMinimumSize(nil,20)
 		method:SetSortItems(false)
+		
 		local cursm = GetConVar('ctools_npc_sm_method'):GetInt()
 		for k,v in ipairs(spawnmethods) do
 			method:AddChoice(v,k,cursm == v)
@@ -483,10 +525,8 @@ function TOOL.BuildCPanel(panel)
 		function method:OnSelect(index,value,data)
 			-- Why the fuck doesn't it work without SetInt???
 			GetConVar('ctools_npc_sm_method'):SetInt(data)
-			slider_alive:SetHeight(data == 1 and 0 or 20)
-			slider_total:SetHeight(data == 1 and 0 or 20)
-			slider_total:SetText(data == 3 and 'Timer (in seconds)' or 'Total NPC amount')
 			help_method:SetText(sm_help[data])
+			method_list:MakeAdditional(data)
 		end
 
 		help_method = method_list:ControlHelp(sm_help[cursm or 1])
@@ -494,22 +534,7 @@ function TOOL.BuildCPanel(panel)
 		local check_randomize = method_list:CheckBox('Randomize spawn','ctools_npc_sm_random')
 		check_randomize:SetHeight(20)
 
-		slider_total = method_list:NumSlider('Total NPC amount','ctools_npc_sm_total',0,100,0)
-		slider_total:SetHeight(cursm == 1 and 0 or 20)
-		local textarea = slider_total:GetTextArea()
-		function textarea:OnValueChange(str)
-			if str ~= '0' then return end
-			textarea:SetText('Infinite')
-		end
-
-		slider_alive = method_list:NumSlider('Maximum alive NPCs','ctools_npc_sm_alive',0,100,0)
-		slider_alive:SetHeight(cursm == 1 and 0 or 20)
-		local textarea = slider_alive:GetTextArea()
-		function textarea:OnValueChange(str)
-			if str ~= '0' then return end
-			textarea:SetText('Area size')
-		end
-
+		method_list:MakeAdditional(cursm)
 	end
 
 	method_list:UpdateData()

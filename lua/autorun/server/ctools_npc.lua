@@ -89,9 +89,11 @@ local function ReceiveData(len,ply)
 		undo.Create('NPC')
 			undo.SetCustomUndoText('Undone NPC Area')
 			undo.AddFunction(function(tab,args)
-				for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
-					if !IsValid(v) then continue end
-					v:Remove()
+				if info.sm_removal then
+					for k,v in ipairs(t_spawnednpcs[reqt.npckey] or {}) do
+						if !IsValid(v) then continue end
+						v:Remove()
+					end
 				end
 				RequestClear(af)
 				t_spawnednpcs[reqt.npckey] = nil
@@ -145,6 +147,7 @@ local function SpawnNPC(req_id,pos_id)
 		t_requests[req_id].info.areatab[pos_id] = nil
 	else
 		t_requests[req_id].info.areatab[pos_id].npc = npc
+		t_requests[req_id].info.areatab[pos_id].delay = nil
 	end
 
 	-- POSITION & ANGLES
@@ -263,10 +266,12 @@ local function SpawnNPC(req_id,pos_id)
 	end
 
 	-- DROP TO FLOOR
-	if !NPCData.NoDrop and !NPCData.OnCeiling then --!NPCData.OnFloor
-		npc:DropToFloor()
-	end
-	
+	--[[
+		if !NPCData.NoDrop and !NPCData.OnCeiling then --!NPCData.OnFloor
+			npc:DropToFloor()
+		end
+	]]
+
 	-- TOTAL COUNT
 	if info.sm_method == 2 then
 		t_requests[req_id].info.sm_total = info.sm_total - 1
@@ -277,9 +282,18 @@ local function GetArea(req_id)
 	local reqt = t_requests[req_id]
 	local info = reqt.info
 	local sm_def = info.sm_method == 1
+	local delay = info.sm_respdelay
 	local temp = {}
 	for k,v in pairs(info.areatab) do
 		if !sm_def and IsValid(v.npc) then continue end
+		if delay and v.npc ~= nil then
+			local ct = CurTime()
+			if !v.delay then
+				t_requests[req_id].info.areatab[k].delay = CurTime()+delay
+				continue
+			end
+			if ct < v.delay then continue end
+		end
 		temp[#temp+1] = k
 	end
 	local t_key = info.sm_random and math.random(#temp) or #temp
@@ -311,7 +325,7 @@ local function SpawnThink()
 		if cnt >= alive_cnt then
 			return
 		end
-		if info.sm_method == 2 and info.sm_total < 0 then
+		if info.sm_method == 2 and info.sm_total < 1 then
 			RequestClear(req_key)
 			return
 		end
