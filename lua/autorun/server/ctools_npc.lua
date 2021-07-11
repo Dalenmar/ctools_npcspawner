@@ -25,12 +25,6 @@ local t_npcs = {}
 local req_key = 1
 local postraceoff = Vector(0,0,512)
 
-local t_ceilingnpcs = {
-	['Barnacle'] = true,
-	['Camera'] = true,
-	['Ceiling Turret'] = true,
-}
-
 
 util.AddNetworkString('ctnpces')
 
@@ -47,10 +41,7 @@ end
 local function InitNPCList()
 	local npctab = list.Get('NPC')
 	for k,v in pairs(npctab) do
-		if !t_npcs[v.Category] then
-			t_npcs[v.Category] = {}
-		end
-		t_npcs[v.Category][v.Name] = v
+		t_npcs[v.Name] = v
 	end
 end
 
@@ -86,7 +77,7 @@ local function ReceiveData(len,ply)
 
 		-- SPAWN METHOD
 		if info.sm_method == 3 then
-			t_requests[af].info.ts = info.sm_timer < 1 and math.huge or CurTime()+info.sm_timer
+			t_requests[af].info.ts = info.sm_total < 1 and math.huge or CurTime()+info.sm_total
 		elseif info.sm_method == 2 then
 			if info.sm_total == 0 then
 				t_requests[af].info.sm_total = math.huge
@@ -122,14 +113,6 @@ local function CalculatePos(req_id,pos_id)
 		t_requests[req_id].info.areatab[pos_id] = nil
 		return
 	end
-	if t_ceilingnpcs[info.class] then
-		if IsValid(tr1.HitEntity) and tr1.HitEntity:IsNPC() then return end
-		if !tr1.Hit then
-			t_requests[req_id].info.areatab[pos_id] = nil
-			return
-		end
-		return tr1.HitPos
-	end
 	local trinfo2 = {start = tr1.HitPos,endpos = tr1.HitPos-postraceoff*2}
 	local tr2 = util.TraceLine(trinfo2)
 	if IsValid(tr2.HitEntity) and tr2.HitEntity:IsNPC() then return end
@@ -141,13 +124,8 @@ local function SpawnNPC(req_id,pos_id)
 	if !reqt then return end
 	local info = reqt.info
 	
-	-- CATEGORY & CLASS CHECK
-	local npccat = t_npcs[info.npccat]
-	if !npccat then
-		RequestClear(req_key)
-		return
-	end
-	local NPCData = npccat[info.class]
+	-- CLASS CHECK
+	local NPCData = t_npcs[info.class]
 	if !NPCData or !NPCData.Class then
 		RequestClear(req_key)
 		return
