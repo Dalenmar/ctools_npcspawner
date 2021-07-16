@@ -14,36 +14,24 @@ TOOL.Information = {
 
 
 if game.SinglePlayer() then
+	local t_vanums = {'LeftClick','RightClick','Reload','Deploy','Holster'}
 	if SERVER then
 		if game.SinglePlayer() then
 			util.AddNetworkString('ctdamnprediction')
-			local function SendNet(num)
-				net.Start('ctdamnprediction')
-					net.WriteUInt(num,3)
-				net.Send(Entity(1))
+			for k,v in ipairs(t_vanums) do
+				TOOL[v] = function(self)
+					net.Start('ctdamnprediction')
+						net.WriteUInt(k,3)
+					net.Send(Entity(1))
+				end
 			end
-			function TOOL:LeftClick() SendNet(0) end
-			function TOOL:RightClick() SendNet(1) end
-			function TOOL:Reload() SendNet(2) end
-			function TOOL:Deploy() SendNet(3) end
-			function TOOL:Holster() SendNet(4) end
 		end
 	else
 		net.Receive('ctdamnprediction',function()
 			local num = net.ReadUInt(3)
 			local tooltab = LocalPlayer():GetTool('ctools_npc')
 			if !tooltab then return end
-			if num == 0 then
-				tooltab:LeftClick()
-			elseif num == 1 then
-				tooltab:RightClick()
-			elseif num == 2 then
-				tooltab:Reload()
-			elseif num == 3 then
-				tooltab:Deploy()
-			elseif num == 4 then
-				tooltab:Holster()
-			end
+			tooltab[t_vanums[num]](tooltab)
 		end)
 	end
 end
@@ -67,12 +55,21 @@ local draw = draw
 
 
 
+local flags = {FCVAR_ARCHIVE,FCVAR_LUA_SERVER,FCVAR_SERVER_CAN_EXECUTE,FCVAR_NOTIFY,FCVAR_REPLICATED}
+local desc = [[Chromium NPC Tool
+	The maximum amount of NPCs that can be spawned per area
+	Minimum value - 1, maximum - 8192
+	This convar guaranties that amount of spawned NPCs for each area may not exceed the value
+	Doesn't work like clamp - just notifies client when creating an area]]
+local cvar_max = CreateConVar('ct_npc_area','1024',flags,desc,1,8192)
+
+
 local mat_wireframe = CreateMaterial('cmat_wireframe','Wireframe')
 local mat_solid = CreateMaterial('cmat_solid','UnlitGeneric',{['$basetexture'] = 'color/white',['$translucent'] = 1,['$vertexalpha'] = 1,['$vertexcolor'] = 1})
 local tex_cornerin = Material('gui/corner512')
 local tex_cornerout = Material('gui/sniper_corner')
 
-local NPC_LIMIT = 1024
+
 local MIN_SPREAD, MAX_SPREAD = 10, 1000
 local MIN_RANDOM, MAX_RANDOM = 0, 100
 local npcbox = 26+8
@@ -92,7 +89,8 @@ local yawlerp = Angle(0,0,0)
 local angcent
 local absolute_lerp = 0
 local npccat_temp = 'Humans + Resistance'
-local norm_f = Vector(0,0,1)
+local norm_f1 = Vector(0,0,1)
+local norm_f2 = Vector(0,0,1)
 local vec_up = Vector(0,0,1)
 
 local t_str = {
@@ -143,21 +141,21 @@ local t_npcbox = {
 }
 
 local t_spawnmethods = {
-	{'Default','NPCs will be spawned across the area (no respawning)'},
-	{'Amount (respawn)','NPCs will respawn till total amount of X is reached'},
-	{'Timer (respawn)','NPCs will respawn while the timer is active'},
+	{'Default','NPCs will be spawned across the area (no respawn)','icon16/arrow_right.png'},
+	{'Amount (respawn)','NPCs respawn till total amount of X is reached','icon16/arrow_refresh.png'},
+	{'Timer (respawn)','NPCs keep spawning as long as timer is active','icon16/time_go.png'},
 }
 
 local t_wepprof = {
-	{8,'Default'},
-	{WEAPON_PROFICIENCY_POOR, 'Poor'},
-	{WEAPON_PROFICIENCY_AVERAGE, 'Average'},
-	{WEAPON_PROFICIENCY_GOOD, 'Good'},
-	{WEAPON_PROFICIENCY_VERY_GOOD, 'Very good'},
-	{WEAPON_PROFICIENCY_PERFECT, 'Perfect'},
-	{5, 'Random'},
-	{6, 'Random good'},
-	{7, 'Random bad'},
+	{8,'Default','icon16/rosette.png'},
+	{WEAPON_PROFICIENCY_POOR, 'Poor','icon16/medal_bronze_3.png'},
+	{WEAPON_PROFICIENCY_AVERAGE, 'Average','icon16/medal_silver_3.png'},
+	{WEAPON_PROFICIENCY_GOOD, 'Good','icon16/medal_silver_2.png'},
+	{WEAPON_PROFICIENCY_VERY_GOOD, 'Very good','icon16/medal_silver_1.png'},
+	{WEAPON_PROFICIENCY_PERFECT, 'Perfect','icon16/medal_gold_1.png'},
+	{5, 'Random','icon16/help.png'},
+	{6, 'Random good','icon16/accept.png'},
+	{7, 'Random bad','icon16/delete.png'},
 }
 
 local t_npcflags = {
@@ -310,6 +308,44 @@ local function DrawAngle(pos,ang,sizelimit,ignorez,norm)
 	cam.End3D2D()
 end
 
+local function DrawGrid(lx,ly,pos,abs,maxz,sx,sy,norm)
+	local lineoff = norm and r_renderoff or -r_renderoff
+	for i = 1, lx+1 do
+		local v1 = Vector(pos.x+abs*(i-1)*sx,pos.y,maxz+lineoff)
+		local v2 = Vector(pos.x+abs*(i-1)*sx,pos.y+ly*abs*sy,maxz+lineoff)
+		render.DrawLine(v1,v2,t_col.line,r_lines_writez)
+	end
+	for i = 1, ly+1 do
+		local v1 = Vector(pos.x,pos.y+abs*(i-1)*sy,maxz+lineoff)
+		local v2 = Vector(pos.x+lx*abs*sx,pos.y+abs*(i-1)*sy,maxz+lineoff)
+		render.DrawLine(v1,v2,t_col.line,r_lines_writez)
+	end
+end
+
+local function AreaLimitCheck(npc_cnt)
+	local sm_method = GetConVar('ctools_npc_sm_method'):GetInt()
+	local sm_total = GetConVar('ctools_npc_sm_total'):GetInt()
+	local sm_alive = GetConVar('ctools_npc_sm_alive'):GetInt()
+	local npc_total = sm_method == 2 and (sm_total ~= 0 and sm_total or npc_cnt) or npc_cnt
+	local npc_alive = sm_method ~= 1 and (sm_alive ~= 0 and sm_alive or npc_cnt) or npc_cnt
+	local npc_max = cvar_max:GetInt()
+	return npc_total <= npc_max or npc_alive <= npc_max or npc_cnt <= npc_max
+end
+
+local function ReturnToolState(snd,nbuff_trang,notif,notif_type)
+	if snd then
+		surface.PlaySound(snd)
+	end
+	if nbuff_trang then
+		trbuff = nil
+		angbuff = nil
+	end
+	if notif then
+		notification.AddLegacy(notif,notif_type or NOTIFY_ERROR,2)
+	end
+	return false
+end
+
 local function CheckConVars()
 	local cvar_cat = GetConVar('ctools_npc_npccat')
 	local cvar_class = GetConVar('ctools_npc_class')
@@ -427,23 +463,12 @@ local function DrawVisuals(bDepth,bSkybox)
 		local by_y = math.floor(math.abs(area.y)/absolute)
 		local sx, sy = area.x < 0 and -1 or 1, area.y < 0 and -1 or 1
 		arx, ary = by_x, by_y
-		absolute_lerp = Lerp(0.2,absolute_lerp,absolute)
-		local col_area = (by_x < 1 or by_y < 1) and t_col.area_bad or t_col.area_good
+		absolute_lerp = Lerp(0.25,absolute_lerp,absolute)
+		local col_area = (by_x < 1 or by_y < 1 or !AreaLimitCheck(by_x*by_y)) and t_col.area_bad or t_col.area_good
 		local secondpos = Vector(trbuff.x+by_x*absolute*sx,trbuff.y+by_y*absolute*sy,maxz)
-		local norm = norm_f:Dot(vec_up) > 0 and lptr.HitNormal:Dot(vec_up) > 0
+		local norm = norm_f1 >= 0 and (angbuff and norm_f2 or lptr.HitNormal:Dot(vec_up)) >= 0
 		DrawArea(trbuff,angbuff and secondpos or curtr,mat_solid,col_area,norm)
-		local lx, ly = math.max(by_x,1), math.max(by_y,1)
-		local lineoff = norm and r_renderoff or -r_renderoff
-		for i = 1, lx+1 do
-			local v1 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y,maxz+lineoff)
-			local v2 = Vector(trbuff.x+absolute_lerp*(i-1)*sx,trbuff.y+ly*absolute_lerp*sy,maxz+lineoff)
-			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
-		end
-		for i = 1, ly+1 do
-			local v1 = Vector(trbuff.x,trbuff.y+absolute_lerp*(i-1)*sy,maxz+lineoff)
-			local v2 = Vector(trbuff.x+lx*absolute_lerp*sx,trbuff.y+absolute_lerp*(i-1)*sy,maxz+lineoff)
-			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
-		end
+		DrawGrid(math.max(by_x,1),math.max(by_y,1),trbuff,absolute_lerp,maxz,sx,sy,norm)
 		if angbuff then
 			if !angcent then
 				angcent = Vector(trbuff.x+absolute*sx*by_x/2,trbuff.y+absolute*sy*by_y/2,maxz)
@@ -459,67 +484,43 @@ local function DrawVisuals(bDepth,bSkybox)
 		end
 	end
 	for _,at in ipairs(t_areas) do
-		DrawArea(Vector(at.pos_start.x,at.pos_start.y,at.maxz),Vector(at.pos_start.x+at.abs*at.by_x*at.ssx,at.pos_start.y+at.abs*at.by_y*at.ssy,at.maxz),mat_solid,t_col.area_placed,at.norm)
-		local lineoff = at.norm and r_renderoff or -r_renderoff
-		for i = 1, at.by_x+1 do
-			local v1 = Vector(at.pos_start.x+at.abs*(i-1)*at.ssx,at.pos_start.y,at.maxz+lineoff)
-			local v2 = Vector(at.pos_start.x+at.abs*(i-1)*at.ssx,at.pos_start.y+at.by_y*at.abs*at.ssy,at.maxz+lineoff)
-			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
-		end
-		for i = 1, at.by_y+1 do
-			local v1 = Vector(at.pos_start.x,at.pos_start.y+at.abs*(i-1)*at.ssy,at.maxz+lineoff)
-			local v2 = Vector(at.pos_start.x+at.by_x*at.abs*at.ssx,at.pos_start.y+at.abs*(i-1)*at.ssy,at.maxz+lineoff)
-			render.DrawLine(v1,v2,t_col.line,r_lines_writez)
-		end
+		local holyshit = Vector(at.pos_start.x,at.pos_start.y,at.maxz)
+		local holyfuckingshit = Vector(at.pos_start.x+at.abs*at.by_x*at.ssx,at.pos_start.y+at.abs*at.by_y*at.ssy,at.maxz)
+		DrawArea(holyshit,holyfuckingshit,mat_solid,t_col.area_placed,at.norm)
+		DrawGrid(at.by_x,at.by_y,at.pos_start,at.abs,at.maxz,at.ssx,at.ssy,at.norm)
 		local orig = Vector(at.pos_start.x+at.abs*at.ssx*at.by_x/2,at.pos_start.y+at.abs*at.ssy*at.by_y/2,at.maxz)
 		local angsizelimit = math.min(at.by_x*at.abs,at.by_y*at.abs)
 		DrawAngle(orig,at.angle,angsizelimit,nil,at.norm)
 	end
 end
 
-
-
-
 function TOOL:LeftClick(trace)
 	if spamtime+0.1 > CurTime() then return false end
+	spamtime = CurTime()
 	local npccat = self:GetClientInfo('npccat') ~= 'All' and self:GetClientInfo('npccat') or npccat_temp
 	local class = self:GetClientInfo('class')
 	npcbox = t_npcbox[class] or t_npcbox._def
 	trace = trace or lp:GetEyeTrace()
-	spamtime = CurTime()
 	if trbuff then
 		local absolute = npcbox*math.Clamp(self:GetClientNumber('spread',20),MIN_SPREAD,MAX_SPREAD)/10
-		local maxz = trbuff.z > trace.HitPos.z and trbuff.z or trace.HitPos.z
+		--local maxz = trbuff.z > trace.HitPos.z and trbuff.z or trace.HitPos.z
 		local maxz = angbuff and (trbuff.z > scndbuff.z and trbuff.z or scndbuff.z) or trbuff.z
 		local area = ((angbuff and scndbuff or trace.HitPos)-trbuff)
 		local by_x = math.floor(math.abs(area.x)/absolute)
 		local by_y = math.floor(math.abs(area.y)/absolute)
-		if by_x < 1 or by_y < 1 then
-			notification.AddLegacy(t_str.notif_area,NOTIFY_ERROR,2)
-			surface.PlaySound(t_sound.fail)
-			trbuff = nil
-			angbuff = nil
-			return false
-		end
 		local npc_cnt = by_x*by_y
-		local sm_method = self:GetClientNumber('sm_method',1)
-		local sm_total = self:GetClientNumber('sm_total',0)
-		local sm_alive = self:GetClientNumber('sm_alive',0)
-		local npc_total = sm_method == 2 and (sm_total ~= 0 and sm_total or npc_cnt) or npc_cnt
-		local npc_alive = sm_method ~= 1 and (sm_alive ~= 0 and sm_alive or npc_cnt) or npc_cnt
-		if !(npc_total < NPC_LIMIT or npc_alive < NPC_LIMIT or npc_cnt < NPC_LIMIT) then
-			notification.AddLegacy(t_str.notif_limit,NOTIFY_ERROR,2)
-			surface.PlaySound(t_sound.fail)
-			trbuff = nil
-			angbuff = nil
-			return false
+		if by_x < 1 or by_y < 1 then
+			return ReturnToolState(t_sound.fail,true,t_str.notif_area)
+		end
+		if !AreaLimitCheck(npc_cnt) then
+			return ReturnToolState(t_sound.fail,true,t_str.notif_limit)
 		end
 		if !angbuff then
 			angcent = nil
 			angbuff = true
+			norm_f2 = trace.HitNormal:Dot(vec_up)
 			scndbuff = lp:GetEyeTrace().HitPos
-			surface.PlaySound(t_sound.success)
-			return false
+			return ReturnToolState(t_sound.success)
 		end
 
 		local flags = 0
@@ -574,26 +575,22 @@ function TOOL:LeftClick(trace)
 			abs = absolute,
 			by_x = by_x,
 			by_y = by_y,
+			by_count = npc_cnt,
 			ssx = trbuff.x < scndbuff.x and 1 or -1,
 			ssy = trbuff.y < scndbuff.y and 1 or -1,
-			norm = norm_f:Dot(vec_up) > 0 and trace.HitNormal:Dot(vec_up) > 0
+			norm = norm_f1 >= 0 and norm_f2 >= 0
 		}
-
-		trbuff = nil
-		angbuff = nil
-		surface.PlaySound(t_sound.success)
-		return false
+		return ReturnToolState(t_sound.success,true)
 	end
 	trbuff = trace.HitPos
-	norm_f = trace.HitNormal
-	surface.PlaySound(t_sound.success)
-	return false
+	norm_f1 = trace.HitNormal:Dot(vec_up)
+	return ReturnToolState(t_sound.success)
 end
 
 function TOOL:RightClick(trace)
 	if spamtime+0.1 > CurTime() then return false end
-	trace = trace or lp:GetEyeTrace()
 	spamtime = CurTime()
+	trace = trace or lp:GetEyeTrace()
 	if trbuff and angbuff then return false end
 	if trbuff then
 		trbuff = nil
@@ -610,29 +607,19 @@ function TOOL:RightClick(trace)
 		bytes = net.BytesWritten()
 	net.SendToServer()
 
-	notification.AddLegacy(string.format(t_str.notif_exec,bytes),NOTIFY_GENERIC,2)
-	surface.PlaySound(t_sound.exec)
-
-	trbuff = nil
 	t_areas = {}
-	return false
+	return ReturnToolState(t_sound.exec,true,string.format(t_str.notif_exec,bytes),NOTIFY_GENERIC)
 end
 
 function TOOL:Reload()
 	if spamtime+0.1 > CurTime() then return false end
 	spamtime = CurTime()
 	if trbuff then
-		trbuff = nil
-		angbuff = nil
-		surface.PlaySound(t_sound.undo)
-		notification.AddLegacy(t_str.notif_undoareacur,NOTIFY_UNDO,2)
-		return false
+		return ReturnToolState(t_sound.undo,true,t_str.notif_undoareacur,NOTIFY_UNDO)
 	end
 	if t_areas[#t_areas] then
 		t_areas[#t_areas] = nil
-		surface.PlaySound(t_sound.undo)
-		notification.AddLegacy(t_str.notif_undoarealast,NOTIFY_UNDO,2)
-		return false
+		return ReturnToolState(t_sound.undo,false,t_str.notif_undoarealast,NOTIFY_UNDO)
 	end
 end
 
@@ -660,8 +647,9 @@ function TOOL:DrawToolScreen(width,height)
 	local width_o = width/8
 	local height_h = height/2
 	
-	local btop = 72
+	local ttop, btop = 52, 72
 	surface.SetDrawColor(t_col.white.r,t_col.white.g,t_col.white.b,t_col.white.a)
+	surface.DrawRect(0,ttop,width,2)
     surface.DrawRect(0,height-btop,width,2)
     surface.DrawRect(width_q-1,height-btop,2,btop)
 	surface.DrawRect(width_h-1,height-btop,2,btop)
@@ -676,19 +664,34 @@ function TOOL:DrawToolScreen(width,height)
 	draw.SimpleText('RANDOM',t_fonts.str_csleft,width_q+width_o,height-12,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	draw.SimpleText(arnpccnt..' NPCs',t_fonts.str_cxright,width-width_q,height-54,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	draw.SimpleText(oldarcnt..' Areas',t_fonts.str_cxright,width-width_q,height-18,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-	draw.SimpleText(self:GetClientInfo('class'),t_fonts.str_class,width_h,24,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(self:GetClientInfo('npccat'),t_fonts.str_class,width_h,14,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+	draw.SimpleText(self:GetClientInfo('class'),t_fonts.str_class,width_h,38,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	if trbuff then
-		draw.SimpleText(arx*ary,t_fonts.num_4,width_h,height_h-52,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('NPCs to be spawned',t_fonts.str_cxnum,width_h,height_h-12,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText('X',t_fonts.str_cxx,width_h,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(arx,t_fonts.num_4,width_q,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText(ary,t_fonts.num_4,width-width_q,height-btop-32,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx*ary,t_fonts.num_4,width_h,height_h-48,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('NPCs to be spawned',t_fonts.str_cxnum,width_h,height_h-8,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText('X',t_fonts.str_cxx,width_h,height-btop-28,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(arx,t_fonts.num_4,width_q,height-btop-28,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText(ary,t_fonts.num_4,width-width_q,height-btop-28,t_col.prewhite,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 	end
 end
 
 function TOOL.BuildCPanel(panel)
 
 	local list_selectnpc, entry_srchnpc, method_list, list_selectwep, form_flagsadd
+	
+	-- Create Slider Function
+	local function CreateSlider(parent,name,cvar,min,max,def,ad_tab)
+		local slider = parent:NumSlider(name,cvar,min,max,def)
+		slider:SetHeight(20)
+		if !ad_tab then return slider end
+		local textarea = slider:GetTextArea()
+		function textarea:OnValueChange(str)
+			if ad_tab[str] then
+				textarea:SetText(ad_tab[str])
+			end
+		end
+		return slider
+	end
 
 	-- Presets
 	local presetpanel = panel:AddControl('ComboBox', {MenuButton = 1, Folder = 'ctools_npc', Options = {['#preset.default'] = ConVarsDefault}, CVars = table.GetKeys(ConVarsDefault)})
@@ -706,8 +709,7 @@ function TOOL.BuildCPanel(panel)
 	-- Spread & Random
 	local slider_spread = panel:AddControl('slider', {label = 'Spread multiplier', command = 'ctools_npc_spread', min = MIN_SPREAD, max = MAX_SPREAD})
 	slider_spread:SetHeight(20)
-	local slider_random = panel:NumSlider('Randomness','ctools_npc_random',MIN_RANDOM,MAX_RANDOM,0)
-	slider_random:SetHeight(20)
+	local slider_random = CreateSlider(panel,'Randomness','ctools_npc_random',MIN_RANDOM,MAX_RANDOM,0)
 
 
 	-- Spawn Method
@@ -723,33 +725,16 @@ function TOOL.BuildCPanel(panel)
 			v:Remove()
 		end
 		if sm == 1 then return end
-		local check_removal = method_list:CheckBox('Remove spawned NPCs on removal','ctools_npc_sm_removal')
-		check_removal:SetHeight(20)
-		method_list.addpanels[#method_list.addpanels+1] = check_removal
-		
-		local slider_respdel = method_list:NumSlider('Respawn delay','ctools_npc_sm_respdelay',0,30,0)
-		slider_respdel:SetHeight(20)
+		local slider_respdel = CreateSlider(method_list,'Respawn delay','ctools_npc_sm_respdelay',0,30,0)
 		method_list.addpanels[#method_list.addpanels+1] = slider_respdel
 
 		local st_str = sm == 3 and 'Timer (in seconds)' or 'Total NPC amount'
 		local st_cvar = sm == 3 and 'ctools_npc_sm_timer' or 'ctools_npc_sm_total'
 		local st_maxval = sm == 3 and 60 or 100
-		local slider_total = method_list:NumSlider(st_str,st_cvar,0,st_maxval,0)
-		slider_total:SetHeight(20)
-		local textarea = slider_total:GetTextArea()
-		function textarea:OnValueChange(str)
-			if str ~= '0' then return end
-			textarea:SetText('Infinite')
-		end
+		local slider_total = CreateSlider(method_list,st_str,st_cvar,0,st_maxval,0,{['0'] = 'Infinite'})
 		method_list.addpanels[#method_list.addpanels+1] = slider_total
 
-		local slider_alive = method_list:NumSlider('Maximum alive NPCs','ctools_npc_sm_alive',0,100,0)
-		slider_alive:SetHeight(20)
-		local textarea = slider_alive:GetTextArea()
-		function textarea:OnValueChange(str)
-			if str ~= '0' then return end
-			textarea:SetText('Area size')
-		end
+		local slider_alive = CreateSlider(method_list,'Maximum alive NPCs','ctools_npc_sm_alive',0,100,0,{['0'] = 'Area size'})
 		method_list.addpanels[#method_list.addpanels+1] = slider_alive
 	end
 	method_list.UpdateData = function(self,sm)
@@ -762,7 +747,7 @@ function TOOL.BuildCPanel(panel)
 
 			local cursm = GetConVar('ctools_npc_sm_method'):GetInt()
 			for k,v in ipairs(t_spawnmethods) do
-				method_list.method:AddChoice(v[1],k,cursm == v[1])
+				method_list.method:AddChoice(v[1],k,cursm == v[1],v[3])
 			end
 			function method_list.method:OnSelect(index,value,data)
 				GetConVar('ctools_npc_sm_method'):SetInt(data)
@@ -774,6 +759,9 @@ function TOOL.BuildCPanel(panel)
 
 			local check_randomize = method_list:CheckBox('Randomize spawn','ctools_npc_sm_random')
 			check_randomize:SetHeight(20)
+			
+			local check_removal = method_list:CheckBox('Remove spawned NPCs on removal','ctools_npc_sm_removal')
+			check_removal:SetHeight(20)
 		end
 
 		method_list:MakeAdditional(sm)
@@ -785,9 +773,9 @@ function TOOL.BuildCPanel(panel)
 	combo_npccat:SetMinimumSize(nil,20)
 	combo_npccat:SetSortItems(false)
 	local curnpccat = GetConVar('ctools_npc_npccat'):GetString()
-	combo_npccat:AddChoice('All','All',curnpccat == 'All')
-	for cat,v in pairs(t_npcs) do
-		combo_npccat:AddChoice(cat,cat,curnpccat == cat)
+	combo_npccat:AddChoice('All','All',curnpccat == 'All','icon16/page_white_text.png')
+	for cat,v in SortedPairs(t_npcs) do
+		combo_npccat:AddChoice(cat,cat,curnpccat == cat,'icon16/group.png')
 	end
 	function combo_npccat:OnSelect(index,value,data)
 		GetConVar('ctools_npc_npccat'):SetString(data)
@@ -938,7 +926,7 @@ function TOOL.BuildCPanel(panel)
 	combo_prof:SetSortItems(false)
 	local curprof = GetConVar('ctools_npc_wepprof'):GetInt()
 	for k,v in ipairs(t_wepprof) do
-		combo_prof:AddChoice(v[2],v[1],curprof == v[1])
+		combo_prof:AddChoice(v[2],v[1],curprof == v[1],v[3])
 	end
 
 
@@ -947,33 +935,12 @@ function TOOL.BuildCPanel(panel)
 	entry_mdl:SetPlaceholderText('Example: "models/some_model.mdl"')
 	local entry_squad = panel:TextEntry('Custom Squad:','ctools_npc_squad')
 	entry_squad:SetPlaceholderText('Internal var for making NPC squads')
-	local slider_skin = panel:NumSlider('Model Skin','ctools_npc_skin',0,8,0)
-	slider_skin:SetHeight(20)
-	local textarea = slider_skin:GetTextArea()
-	function textarea:OnValueChange(str)
-		if str == '0' then
-			textarea:SetText('Default')
-		elseif str == '1' then
-			textarea:SetText('Random')
-		end
-	end
+	local slider_skin = CreateSlider(panel,'Model Skin','ctools_npc_skin',0,8,0,{['0'] = 'Default',['1'] = 'Random'})
 
 
 	-- Health
-	local slider_hpstart = panel:NumSlider('Start Health','ctools_npc_hp',0,100,0)
-	slider_hpstart:SetHeight(20)
-	local textarea = slider_hpstart:GetTextArea()
-	function textarea:OnValueChange(str)
-		if str ~= '0' then return end
-		textarea:SetText('Default')
-	end
-	local slider_hpmax = panel:NumSlider('Max Health','ctools_npc_maxhp',0,100,0)
-	slider_hpmax:SetHeight(20)
-	local textarea = slider_hpmax:GetTextArea()
-	function textarea:OnValueChange(str)
-		if str ~= '0' then return end
-		textarea:SetText('Default')
-	end
+	local slider_hpstart = CreateSlider(panel,'Start Health','ctools_npc_hp',0,100,0,{['0'] = 'Default'})
+	local slider_hpmax = CreateSlider(panel,'Max Health','ctools_npc_maxhp',0,100,0,{['0'] = 'Default'})
 
 
 	-- Notarget
@@ -993,10 +960,7 @@ function TOOL.BuildCPanel(panel)
 		check_flag.OnChange = function(self,bool)
 			GetConVar('ctools_npc_'..fstr):SetInt(bool and 1 or 0)
 		end
-		check_flag.UpdateData = function(this)
-			check_flag:SetChecked(tobool(GetConVar('ctools_npc_'..fstr):GetInt()))
-		end
-		check_flag:UpdateData()
+		check_flag:SetChecked(tobool(GetConVar('ctools_npc_'..fstr):GetInt()))
 	end
 
 
